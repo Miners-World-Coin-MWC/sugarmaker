@@ -113,9 +113,17 @@ jobs:
         with:
           ndk-version: r26d
 
+      - name: Make deps script executable
+        if: matrix.platform == 'android'
+        run: chmod +x ./deps-android-aarch64/deps-android-aarch64.sh
+
       - name: Build Android ARM64 deps
         if: matrix.platform == 'android'
         run: ./deps-android-aarch64/deps-android-aarch64.sh
+
+      - name: Make build script executable
+        if: matrix.platform == 'android'
+        run: chmod +x ./build-android-aarch64.sh
 
       - name: Build Sugarmaker Android ARM64
         if: matrix.platform == 'android'
