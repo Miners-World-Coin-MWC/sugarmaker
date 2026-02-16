@@ -115,7 +115,7 @@ jobs:
 
       - name: Build Android ARM64 deps
         if: matrix.platform == 'android'
-        run: ./deps-android-aarch64.sh
+        run: ./deps-android-aarch64/deps-android-aarch64.sh
 
       - name: Build Sugarmaker Android ARM64
         if: matrix.platform == 'android'
