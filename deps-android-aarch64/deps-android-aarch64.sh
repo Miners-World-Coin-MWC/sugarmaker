@@ -6,7 +6,6 @@
 set -e
 
 # ----------- CONFIG -----------
-# NDK path should be set via environment (CI will do this)
 # detect NDK from PATH if not set
 if [ -z "$NDK" ]; then
   if [ -d "$HOME/android-ndk-r26d" ]; then
@@ -33,7 +32,7 @@ echo "=== Output prefix: $PREFIX ==="
 # ----------- OPENSSL -----------
 echo "=== Building OpenSSL for Android ARM64 ==="
 
-OPENSSL_VERSION=1.1.0g
+OPENSSL_VERSION=1.1.1t
 wget https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz
 tar -xvzf openssl-$OPENSSL_VERSION.tar.gz
 cd openssl-$OPENSSL_VERSION
@@ -55,13 +54,13 @@ cd ..
 # ----------- CURL -----------
 echo "=== Building libcurl for Android ARM64 ==="
 
-CURL_VERSION=7.57.0
-wget https://github.com/curl/curl/releases/download/curl-7_57_0/curl-$CURL_VERSION.tar.gz
+CURL_VERSION=7.87.0
+wget https://github.com/curl/curl/releases/download/curl-7_87_0/curl-$CURL_VERSION.tar.gz
 tar -xvzf curl-$CURL_VERSION.tar.gz
 cd curl-$CURL_VERSION
 
 export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig
-export CFLAGS="-O3 -fPIC --sysroot=$TOOLCHAIN/sysroot"
+export CFLAGS="-O3 -fPIC --sysroot=$TOOLCHAIN/sysroot -I$PREFIX/include"
 export LDFLAGS="-L$PREFIX/lib -static-libgcc"
 
 ./buildconf
