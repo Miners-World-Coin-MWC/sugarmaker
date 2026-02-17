@@ -47,14 +47,6 @@ jobs:
             arch: aarch64
 
           # ======================
-          # ANDROID ARM64
-          # ======================
-          - name: android-arm64
-            os: ubuntu-22.04
-            platform: android
-            arch: arm64
-
-          # ======================
           # MACOS
           # ======================
           - name: x86_64-macos
@@ -103,33 +95,6 @@ jobs:
           ./autogen.sh || true
           ./configure --with-curl
           make -j3
-
-      # =================================================
-      # ANDROID ARM64
-      # =================================================
-      - name: Install Android NDK
-        if: matrix.platform == 'android'
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26d
-
-      - name: Make deps script executable
-        if: matrix.platform == 'android'
-        run: chmod +x ./deps-android-aarch64/deps-android-aarch64.sh
-
-      - name: Build Android ARM64 deps
-        if: matrix.platform == 'android'
-        env:
-          NDK: ${{ runner.tool_cache }}/android-ndk-r26d/26.1.1
-        run: ./deps-android-aarch64/deps-android-aarch64.sh
-
-      - name: Make build script executable
-        if: matrix.platform == 'android'
-        run: chmod +x ./build-android-aarch64.sh
-
-      - name: Build Sugarmaker Android ARM64
-        if: matrix.platform == 'android'
-        run: ./build-android-aarch64.sh
 
       # =================================================
       # MACOS
