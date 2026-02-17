@@ -1,7 +1,7 @@
 #!/bin/bash
 # deps-android-aarch64.sh
 # Build OpenSSL + libcurl for Android ARM64 (aarch64, arm64-v8a)
-# Fully CI-friendly — works with NDK r26+ in GitHub Actions
+# CI-friendly — works with NDK r26+ (GitHub Actions)
 
 set -e
 
@@ -17,6 +17,9 @@ if [ -z "$NDK" ]; then
     exit 1
   fi
 fi
+
+export ANDROID_NDK_HOME="$NDK"
+export ANDROID_NDK_ROOT="$NDK"
 
 TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
 TARGET=aarch64-linux-android
@@ -37,7 +40,7 @@ wget https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz
 tar -xvzf openssl-$OPENSSL_VERSION.tar.gz
 cd openssl-$OPENSSL_VERSION
 
-# Export proper NDK compiler tools
+# Export NDK compiler tools
 export PATH=$TOOLCHAIN/bin:$PATH
 export AR=$TOOLCHAIN/bin/$TARGET-ar
 export AS=$TOOLCHAIN/bin/$TARGET-as
@@ -47,10 +50,10 @@ export LD=$TOOLCHAIN/bin/$TARGET-ld
 export RANLIB=$TOOLCHAIN/bin/$TARGET-ranlib
 export STRIP=$TOOLCHAIN/bin/$TARGET-strip
 
-# Force OpenSSL to use clang
+# Configure OpenSSL for Android ARM64 — skip tests to avoid gcc detection
 ./Configure android-arm64 no-shared no-unit-test --prefix="$PREFIX" --with-cc="$CC"
-make -j"$THREADS"
-make install
+make -j"$THREADS" build_libs
+make install_sw
 cd ..
 
 # ----------- CURL -----------

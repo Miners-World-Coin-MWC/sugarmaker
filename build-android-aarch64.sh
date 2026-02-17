@@ -16,17 +16,12 @@ THREADS=$(nproc)
 echo "=== Using NDK: $NDK ==="
 echo "=== Dependencies prefix: $DEPS_PREFIX ==="
 
-# ----------- CLEAN ----------
+# ----------- CLEAN -----------
 echo "=== Cleaning previous builds ==="
 make distclean || echo "clean skipped"
 rm -f config.status
 
-# ----------- BUILD ----------
-echo "=== Running autogen.sh ==="
-./autogen.sh
-
-echo "=== Configuring Sugarmaker for Android ==="
-
+# ----------- SET TOOLCHAIN -----------
 export CC=$TOOLCHAIN/bin/$TARGET$API-clang
 export CXX=$TOOLCHAIN/bin/$TARGET$API-clang++
 export AR=$TOOLCHAIN/bin/$TARGET-ar
@@ -35,11 +30,16 @@ export LD=$TOOLCHAIN/bin/$TARGET-ld
 export RANLIB=$TOOLCHAIN/bin/$TARGET-ranlib
 export STRIP=$TOOLCHAIN/bin/$TARGET-strip
 
-# Compiler flags
-export CFLAGS="-O3 -fPIE -fomit-frame-pointer -I$DEPS_PREFIX/include"
+# Compiler/linker flags
+export CFLAGS="-O3 -fPIE -fPIC -fomit-frame-pointer -I$DEPS_PREFIX/include"
 export LDFLAGS="-pie -L$DEPS_PREFIX/lib"
-export LIBS="-lssl -lcrypto -lz -lpthread -ldl"
+export LIBS="-lssl -lcrypto -lcurl -lz -lpthread -ldl"
 
+# ----------- BUILD ----------
+echo "=== Running autogen.sh ==="
+./autogen.sh || true
+
+echo "=== Configuring Sugarmaker for Android ==="
 ./configure \
   --host=$TARGET \
   --with-curl="$DEPS_PREFIX" \
@@ -49,7 +49,7 @@ export LIBS="-lssl -lcrypto -lz -lpthread -ldl"
   LIBS="$LIBS"
 
 echo "=== Building Sugarmaker ==="
-make -j$THREADS
+make -j"$THREADS"
 
 echo "=== Stripping binary ==="
 $STRIP -s sugarmaker
@@ -59,15 +59,15 @@ file sugarmaker | grep "statically linked" || echo "Warning: not fully static"
 
 # ----------- PACKAGE ----------
 RELEASE=sugarmaker-android-arm64
-rm -rf $RELEASE
-mkdir -p $RELEASE
-cp ./mining-script/sh/*.sh $RELEASE/ || echo "No mining scripts found, skipping"
-cp sugarmaker $RELEASE/
+rm -rf "$RELEASE"
+mkdir -p "$RELEASE"
+cp ./mining-script/sh/*.sh "$RELEASE/" || echo "No mining scripts found, skipping"
+cp sugarmaker "$RELEASE/"
 
 echo "=== Creating zip ==="
-zip -r $RELEASE/$RELEASE.zip $RELEASE
+zip -r "$RELEASE/$RELEASE.zip" "$RELEASE"
 
 echo "=== SHA256 sum ==="
-sha256sum $RELEASE/$RELEASE.zip > $RELEASE/$RELEASE.zip.sha256
+sha256sum "$RELEASE/$RELEASE.zip" > "$RELEASE/$RELEASE.zip.sha256"
 
 echo "=== Sugarmaker Android ARM64 build complete ==="
