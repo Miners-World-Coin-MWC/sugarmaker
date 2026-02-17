@@ -7,9 +7,16 @@ set -e
 
 # ----------- CONFIG -----------
 # NDK path should be set via environment (CI will do this)
+# detect NDK from PATH if not set
 if [ -z "$NDK" ]; then
-  echo "ERROR: NDK environment variable not set!"
-  exit 1
+  if [ -d "$HOME/android-ndk-r26d" ]; then
+    export NDK="$HOME/android-ndk-r26d"
+  elif command -v ndk-build >/dev/null 2>&1; then
+    export NDK=$(dirname $(dirname $(which ndk-build)))
+  else
+    echo "ERROR: NDK environment variable not set!"
+    exit 1
+  fi
 fi
 
 TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64

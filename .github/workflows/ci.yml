@@ -119,6 +119,8 @@ jobs:
 
       - name: Build Android ARM64 deps
         if: matrix.platform == 'android'
+        env:
+          NDK: ${{ runner.tool_cache }}/android-ndk-r26d/26.1.1
         run: ./deps-android-aarch64/deps-android-aarch64.sh
 
       - name: Make build script executable
