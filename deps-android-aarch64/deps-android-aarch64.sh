@@ -1,12 +1,12 @@
 #!/bin/bash
 # deps-android-aarch64.sh
 # Build OpenSSL + libcurl for Android ARM64 (aarch64, arm64-v8a)
-# Fully CI-friendly — uses NDK provided by GitHub Actions
+# Fully CI-friendly — works with NDK r26+ in GitHub Actions
 
 set -e
 
 # ----------- CONFIG -----------
-# detect NDK from PATH if not set
+# Detect NDK from PATH if not set
 if [ -z "$NDK" ]; then
   if [ -d "$HOME/android-ndk-r26d" ]; then
     export NDK="$HOME/android-ndk-r26d"
@@ -22,7 +22,7 @@ TOOLCHAIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64
 TARGET=aarch64-linux-android
 API=21
 PREFIX=$(pwd)/android-build
-mkdir -p $PREFIX
+mkdir -p "$PREFIX"
 
 THREADS=$(nproc)
 
@@ -37,6 +37,7 @@ wget https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz
 tar -xvzf openssl-$OPENSSL_VERSION.tar.gz
 cd openssl-$OPENSSL_VERSION
 
+# Export proper NDK compiler tools
 export PATH=$TOOLCHAIN/bin:$PATH
 export AR=$TOOLCHAIN/bin/$TARGET-ar
 export AS=$TOOLCHAIN/bin/$TARGET-as
@@ -46,8 +47,9 @@ export LD=$TOOLCHAIN/bin/$TARGET-ld
 export RANLIB=$TOOLCHAIN/bin/$TARGET-ranlib
 export STRIP=$TOOLCHAIN/bin/$TARGET-strip
 
-./Configure android-arm64 no-shared no-unit-test --prefix=$PREFIX
-make -j$THREADS
+# Force OpenSSL to use clang
+./Configure android-arm64 no-shared no-unit-test --prefix="$PREFIX" --with-cc="$CC"
+make -j"$THREADS"
 make install
 cd ..
 
@@ -59,18 +61,19 @@ wget https://github.com/curl/curl/releases/download/curl-7_87_0/curl-$CURL_VERSI
 tar -xvzf curl-$CURL_VERSION.tar.gz
 cd curl-$CURL_VERSION
 
-export PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 export CFLAGS="-O3 -fPIC --sysroot=$TOOLCHAIN/sysroot -I$PREFIX/include"
 export LDFLAGS="-L$PREFIX/lib -static-libgcc"
 
 ./buildconf
 ./configure \
   --host=$TARGET \
-  --with-ssl=$PREFIX \
+  --with-ssl="$PREFIX" \
   --disable-shared \
   --enable-static \
-  --prefix=$PREFIX
-make -j$THREADS
+  --prefix="$PREFIX" \
+  CC="$CC"
+make -j"$THREADS"
 make install
 cd ..
 
