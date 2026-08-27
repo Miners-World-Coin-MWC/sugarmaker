@@ -23,32 +23,60 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ======================
+          # ============================================================
           # LINUX
-          # ======================
+          # ============================================================
+
+          # Native x86_64
           - name: x86_64-linux
             os: ubuntu-22.04
             platform: linux
             arch: x86_64
-          
+            native: true
+
+          # 32-bit x86 (cross via multilib)
           - name: i686-linux
             os: ubuntu-22.04
             platform: linux
             arch: i686
+            native: false
+            cross_host: i686-linux-gnu
 
+          # ARMv7 / 32-bit ARM (cross)
           - name: armv7l-linux
             os: ubuntu-22.04
             platform: linux
             arch: armv7l
+            native: false
+            cross_host: arm-linux-gnueabihf
 
+          # ARM64 (cross, on an x86_64 runner)
           - name: aarch64-linux
             os: ubuntu-22.04
             platform: linux
             arch: aarch64
+            native: false
+            cross_host: aarch64-linux-gnu
 
-          # ======================
+          # ARM64 (native runner, no cross toolchain needed)
+          - name: aarch64-linux-native
+            os: ubuntu-24.04-arm
+            platform: linux
+            arch: aarch64
+            native: true
+
+          # RISC-V 64 (cross)
+          - name: riscv64-linux
+            os: ubuntu-22.04
+            platform: linux
+            arch: riscv64
+            native: false
+            cross_host: riscv64-linux-gnu
+
+          # ============================================================
           # MACOS
-          # ======================
+          # ============================================================
+
           - name: x86_64-macos
             os: macos-15-intel
             platform: macos
@@ -61,45 +89,154 @@ jobs:
             arch: arm64
             host: arm64-apple-darwin
 
-          # ======================
+          # ============================================================
           # WINDOWS
-          # ======================
+          # ============================================================
+
           - name: x86_64-win
             os: windows-latest
             platform: windows
             arch: x86_64
+            msystem: MINGW64
 
           - name: i686-win
             os: windows-latest
             platform: windows
             arch: i686
+            msystem: MINGW32
+
+          - name: arm64-win
+            os: windows-11-arm
+            platform: windows
+            arch: arm64
+            msystem: CLANGARM64
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      # =================================================
-      # LINUX
-      # =================================================
-      - name: Install Linux deps
-        if: matrix.platform == 'linux'
+      # ============================================================
+      # LINUX - NATIVE DEPS
+      # ============================================================
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux' && matrix.native == true
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential autoconf automake libtool pkg-config \
             libcurl4-openssl-dev libjansson-dev libssl-dev libgmp-dev
 
-      - name: Build (Linux)
-        if: matrix.platform == 'linux'
+      # ============================================================
+      # LINUX - CROSS TOOLCHAINS
+      # ============================================================
+      - name: Install Linux cross toolchain
+        if: matrix.platform == 'linux' && matrix.native == false
+        run: |
+          sudo dpkg --add-architecture armhf
+          sudo dpkg --add-architecture arm64
+          sudo dpkg --add-architecture riscv64
+          sudo dpkg --add-architecture i386
+
+          sudo apt-get update
+
+          case "${{ matrix.arch }}" in
+            i686)
+              sudo apt-get install -y \
+                autoconf automake libtool pkg-config \
+                gcc-multilib g++-multilib \
+                libc6-dev-i386 \
+                libcurl4-openssl-dev:i386 \
+                libjansson-dev:i386 \
+                libssl-dev:i386 \
+                libgmp-dev:i386
+              ;;
+            armv7l)
+              sudo apt-get install -y \
+                autoconf automake libtool pkg-config \
+                gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+                libc6-dev-armhf-cross \
+                libcurl4-openssl-dev:armhf \
+                libjansson-dev:armhf \
+                libssl-dev:armhf \
+                libgmp-dev:armhf
+              ;;
+            aarch64)
+              sudo apt-get install -y \
+                autoconf automake libtool pkg-config \
+                gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+                libc6-dev-arm64-cross \
+                libcurl4-openssl-dev:arm64 \
+                libjansson-dev:arm64 \
+                libssl-dev:arm64 \
+                libgmp-dev:arm64
+              ;;
+            riscv64)
+              sudo apt-get install -y \
+                autoconf automake libtool pkg-config \
+                gcc-riscv64-linux-gnu g++-riscv64-linux-gnu \
+                libc6-dev-riscv64-cross \
+                libcurl4-openssl-dev:riscv64 \
+                libjansson-dev:riscv64 \
+                libssl-dev:riscv64 \
+                libgmp-dev:riscv64
+              ;;
+          esac
+
+      # ============================================================
+      # LINUX - BUILD
+      # ============================================================
+      - name: Build (Linux, native)
+        if: matrix.platform == 'linux' && matrix.native == true
         run: |
           ./autogen.sh || true
           ./configure --with-curl
-          make -j3
+          make ${MAKEJOBS}
 
-      # =================================================
+      - name: Build (Linux, cross)
+        if: matrix.platform == 'linux' && matrix.native == false
+        run: |
+          ./autogen.sh || true
+
+          HOST="${{ matrix.cross_host }}"
+          echo "Cross compiling for: ${HOST}"
+
+          export CC="${HOST}-gcc"
+          export CXX="${HOST}-g++"
+          export AR="${HOST}-ar"
+          export RANLIB="${HOST}-ranlib"
+          export STRIP="${HOST}-strip"
+
+          case "${{ matrix.arch }}" in
+            i686)
+              export CC="gcc"
+              export CXX="g++"
+              unset AR RANLIB STRIP
+              export CFLAGS="-m32"
+              export CXXFLAGS="-m32"
+              export LDFLAGS="-m32"
+              ;;
+            armv7l)
+              export CFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+              export CXXFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+              ;;
+            aarch64)
+              export CFLAGS="-march=armv8-a"
+              export CXXFLAGS="-march=armv8-a"
+              ;;
+            riscv64)
+              export CFLAGS="-march=rv64gc -mabi=lp64d"
+              export CXXFLAGS="-march=rv64gc -mabi=lp64d"
+              ;;
+          esac
+
+          ./configure --host="${HOST}" --with-curl
+          make ${MAKEJOBS}
+
+      # ============================================================
       # MACOS
-      # =================================================
-      - name: Install macOS deps
+      # ============================================================
+      - name: Install macOS dependencies
         if: matrix.platform == 'macos'
         run: |
           brew update
@@ -118,51 +255,73 @@ jobs:
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             export CFLAGS="-arch x86_64"
             export CXXFLAGS="-arch x86_64"
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+            export CFLAGS="-arch arm64"
+            export CXXFLAGS="-arch arm64"
           fi
 
-          ./configure --with-curl --host=${{ matrix.host }}
-          make -j3
+          ./configure --with-curl --host="${{ matrix.host }}"
+          make ${MAKEJOBS}
 
-      # =================================================
-      # WINDOWS (MSYS2)
-      # =================================================
+      # ============================================================
+      # WINDOWS - MSYS2 (msystem picked per-arch via matrix, set at
+      # environment setup time so the shell actually launches in it)
+      # ============================================================
       - name: Setup MSYS2
         if: matrix.platform == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           update: true
+          msystem: ${{ matrix.msystem }}
           install: >
             base-devel
-            automake autoconf libtool pkg-config
-            mingw-w64-x86_64-toolchain
-            mingw-w64-i686-toolchain
-            mingw-w64-x86_64-curl
-            mingw-w64-i686-curl
-            mingw-w64-x86_64-jansson
-            mingw-w64-i686-jansson
-            mingw-w64-x86_64-openssl
-            mingw-w64-i686-openssl
-            mingw-w64-x86_64-gmp
-            mingw-w64-i686-gmp
+            autoconf
+            automake
+            libtool
+            pkg-config
+
+      - name: Install Windows x86/x64 dependencies
+        if: matrix.platform == 'windows' && matrix.arch != 'arm64'
+        shell: msys2 {0}
+        run: |
+          if [ "${{ matrix.arch }}" = "i686" ]; then
+            pacman -S --noconfirm \
+              mingw-w64-i686-toolchain \
+              mingw-w64-i686-curl \
+              mingw-w64-i686-jansson \
+              mingw-w64-i686-openssl \
+              mingw-w64-i686-gmp
+          else
+            pacman -S --noconfirm \
+              mingw-w64-x86_64-toolchain \
+              mingw-w64-x86_64-curl \
+              mingw-w64-x86_64-jansson \
+              mingw-w64-x86_64-openssl \
+              mingw-w64-x86_64-gmp
+          fi
+
+      - name: Install Windows ARM64 dependencies
+        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
+        shell: msys2 {0}
+        run: |
+          pacman -S --noconfirm \
+            mingw-w64-clang-aarch64-toolchain \
+            mingw-w64-clang-aarch64-curl \
+            mingw-w64-clang-aarch64-jansson \
+            mingw-w64-clang-aarch64-openssl \
+            mingw-w64-clang-aarch64-gmp
 
       - name: Build (Windows)
         if: matrix.platform == 'windows'
         shell: msys2 {0}
         run: |
           ./autogen.sh || true
-
-          if [ "${{ matrix.arch }}" = "i686" ]; then
-            export MSYSTEM=MINGW32
-          else
-            export MSYSTEM=MINGW64
-          fi
-
           ./configure --with-curl
-          make -j3
+          make ${MAKEJOBS}
 
-      # =================================================
-      # WINDOWS DLL BUNDLE
-      # =================================================
+      # ============================================================
+      # WINDOWS - DLL BUNDLE
+      # ============================================================
       - name: Bundle Windows DLLs
         if: matrix.platform == 'windows'
         shell: msys2 {0}
@@ -172,24 +331,43 @@ jobs:
 
           if [ "${{ matrix.arch }}" = "i686" ]; then
             DLL_DIR="/mingw32/bin"
-            cp "$DLL_DIR/libcurl-4.dll" dist/
-            cp "$DLL_DIR/libgmp-10.dll" dist/
-            cp "$DLL_DIR/libjansson-4.dll" dist/
-            cp "$DLL_DIR/libwinpthread-1.dll" dist/
-          else
+            cp "$DLL_DIR/libcurl-4.dll" dist/ || true
+            cp "$DLL_DIR/libgmp-10.dll" dist/ || true
+            cp "$DLL_DIR/libjansson-4.dll" dist/ || true
+            cp "$DLL_DIR/libwinpthread-1.dll" dist/ || true
+
+          elif [ "${{ matrix.arch }}" = "x86_64" ]; then
             DLL_DIR="/mingw64/bin"
-            ldd sugarmaker.exe | grep "$DLL_DIR" | awk '{print $3}' | sort -u | while read dll; do
-              [ -f "$dll" ] && cp "$dll" dist/
-            done
+            ldd sugarmaker.exe \
+              | grep "$DLL_DIR" \
+              | awk '{print $3}' \
+              | sort -u \
+              | while read dll; do
+                  [ -f "$dll" ] && cp "$dll" dist/
+                done
+
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+            DLL_DIR="/clangarm64/bin"
+            ldd sugarmaker.exe \
+              | grep "$DLL_DIR" \
+              | awk '{print $3}' \
+              | sort -u \
+              | while read dll; do
+                  [ -f "$dll" ] && cp "$dll" dist/
+                done
           fi
 
-      # =================================================
+      # ============================================================
       # ARTIFACTS
-      # =================================================
+      # ============================================================
+      - name: Prepare Linux/macOS artifact
+        if: matrix.platform != 'windows'
+        run: |
+          mkdir -p dist
+          cp sugarmaker dist/
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sugarmaker-${{ matrix.name }}
-          path: |
-            dist/*
-            sugarmaker
+          path: dist/*

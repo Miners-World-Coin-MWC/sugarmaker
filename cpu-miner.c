@@ -1918,27 +1918,31 @@ static void signal_handler(int sig)
 
 static void show_credits() {
 	printf("\n");
-	printf("     *** "PACKAGE_NAME" "PACKAGE_VERSION" by Kanon ***\n");
-	printf("     Multi-threaded CPU miner for Sugarchain and other Yespower variants\n");
+	printf("     *** "PACKAGE_NAME" "PACKAGE_VERSION" by MinersWorldCoin ***\n");
+	printf("     Multi-threaded CPU miner for MinersWorldCoin and other Yespower variants\n");
 	printf("\n");
 	printf("     Authors:\n");
 	printf("     Jeff Garzik\n");
 	printf("     Pooler\n");
 	printf("     Alexander Peslyak\n");
 	printf("     Kanon\n");
+	printf("     MinersWorldCoin\n");	
 	printf("\n");
-	printf("     Donation to Kanon:\n");
+	printf("     Donation to MinersWorldCoin:\n");
 	printf("     Your support is very helpful to develop better software:)\n");
 	printf("\n");
-	printf("     BTC    1JojGCHLpEVMv6Z28y9gN6jUXtGF2ioEUV\n");
-	printf("     BTC    bc1qqe30mhqdkjfszzc4pex5udvay2ay6w0htgwtax (bech32)\n");
-	printf("     SUGAR  sugar1qv0ahzfa2ssu47wes89390sl0jz6g05h0267u8g\n");
+	printf("     BTC    bc1qg89g826m8lt4lww0s3tjr60ngk6ltea3uwv8at\n");
+	printf("     LTC    ltc1q3r0xzyf2njn5aqjgwx35ac2ef3ycukh3qz4f28\n");
+	printf("     DOGE   DLyaC9rVAgXecTS3JkrNFK4cXTbEhggKzp\n");
+	printf("     MWC    9R5aTkmbJs7pPL4hEXvTps1EyStYbHgGTF\n");
+	printf("     ADVC   AK7WMs3B2u32rmdAGnKAmeJHbbrmEvbb1E\n");
+	
 	printf("\n");
 	printf("     Download Latest Release:\n");
-	printf("     https://github.com/decryp2kanon/sugarmaker/releases/latest\n");
+	printf("     https://github.com/Miners-World-Coin-MWC/sugarmaker/releases/latest\n");
 	printf("\n");
 	printf("     Bug Report or Question (English, Chinese, Japanese, Korean):\n");
-	printf("     https://github.com/decryp2kanon/sugarmaker/issues\n");
+	printf("     https://github.com/Miners-World-Coin-MWC/sugarmaker/issues\n");
 	printf("\n");
 }
 
