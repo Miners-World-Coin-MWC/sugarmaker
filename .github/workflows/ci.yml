@@ -99,11 +99,14 @@ jobs:
             arch: x86_64
             msystem: MINGW64
 
+          # 32-bit Windows: MSYS2 dropped mingw-w64-i686-* packages, so this
+          # is cross-compiled from a Linux runner using apt's mingw-w64
+          # toolchain + the project's own depends/deps-win32 static libs,
+          # matching what build_scripts/build-w32.sh already expects.
           - name: i686-win
-            os: windows-latest
-            platform: windows
+            os: ubuntu-22.04
+            platform: win32-cross
             arch: i686
-            msystem: MINGW32
 
           - name: arm64-win
             os: windows-11-arm
@@ -133,25 +136,32 @@ jobs:
       - name: Install Linux cross toolchain
         if: matrix.platform == 'linux' && matrix.native == false
         run: |
-          sudo dpkg --add-architecture armhf
-          sudo dpkg --add-architecture arm64
-          sudo dpkg --add-architecture riscv64
-          sudo dpkg --add-architecture i386
+          UBUNTU_CODENAME="$(lsb_release -cs)"
 
-          sudo apt-get update
-
+          # Only touch the foreign architecture this specific job needs.
+          # armhf/arm64/riscv64 don't exist in the default archive.ubuntu.com
+          # sources on GitHub runners (only amd64/i386 live there) - they're
+          # served from ports.ubuntu.com. i386 doesn't need this since it's
+          # already part of the default archive.
           case "${{ matrix.arch }}" in
             i686)
+              sudo dpkg --add-architecture i386
+              sudo apt-get update
+
               sudo apt-get install -y \
                 autoconf automake libtool pkg-config \
                 gcc-multilib g++-multilib \
-                libc6-dev-i386 \
                 libcurl4-openssl-dev:i386 \
                 libjansson-dev:i386 \
                 libssl-dev:i386 \
                 libgmp-dev:i386
               ;;
             armv7l)
+              sudo dpkg --add-architecture armhf
+              echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main universe" \
+                | sudo tee /etc/apt/sources.list.d/armhf.list
+              sudo apt-get update
+
               sudo apt-get install -y \
                 autoconf automake libtool pkg-config \
                 gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
@@ -162,6 +172,11 @@ jobs:
                 libgmp-dev:armhf
               ;;
             aarch64)
+              sudo dpkg --add-architecture arm64
+              echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main universe" \
+                | sudo tee /etc/apt/sources.list.d/arm64.list
+              sudo apt-get update
+
               sudo apt-get install -y \
                 autoconf automake libtool pkg-config \
                 gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
@@ -172,6 +187,11 @@ jobs:
                 libgmp-dev:arm64
               ;;
             riscv64)
+              sudo dpkg --add-architecture riscv64
+              echo "deb [arch=riscv64] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main universe" \
+                | sudo tee /etc/apt/sources.list.d/riscv64.list
+              sudo apt-get update
+
               sudo apt-get install -y \
                 autoconf automake libtool pkg-config \
                 gcc-riscv64-linux-gnu g++-riscv64-linux-gnu \
@@ -215,20 +235,30 @@ jobs:
               export CFLAGS="-m32"
               export CXXFLAGS="-m32"
               export LDFLAGS="-m32"
+              MULTIARCH="i386-linux-gnu"
               ;;
             armv7l)
               export CFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
               export CXXFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+              MULTIARCH="arm-linux-gnueabihf"
               ;;
             aarch64)
               export CFLAGS="-march=armv8-a"
               export CXXFLAGS="-march=armv8-a"
+              MULTIARCH="aarch64-linux-gnu"
               ;;
             riscv64)
               export CFLAGS="-march=rv64gc -mabi=lp64d"
               export CXXFLAGS="-march=rv64gc -mabi=lp64d"
+              MULTIARCH="riscv64-linux-gnu"
               ;;
           esac
+
+          # Point pkg-config at the target arch's .pc files instead of the
+          # host's, and allow it to run at all under a cross --host build.
+          export PKG_CONFIG_PATH=""
+          export PKG_CONFIG_LIBDIR="/usr/lib/${MULTIARCH}/pkgconfig:/usr/share/pkgconfig"
+          export PKG_CONFIG_ALLOW_CROSS=1
 
           ./configure --host="${HOST}" --with-curl
           make ${MAKEJOBS}
@@ -264,6 +294,51 @@ jobs:
           make ${MAKEJOBS}
 
       # ============================================================
+      # WINDOWS i686 - CROSS-COMPILE FROM LINUX
+      # (mirrors build_scripts/build-w32.sh, statically linked so no
+      # DLL bundling is needed afterward)
+      # ============================================================
+      - name: Install mingw-w64 i686 cross toolchain
+        if: matrix.platform == 'win32-cross'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-mingw-w64-i686 g++-mingw-w64-i686 binutils-mingw-w64-i686 \
+            autoconf automake libtool pkg-config \
+            build-essential git wget
+
+      - name: Build depends/deps-win32 (curl + pthread-win32, static)
+        if: matrix.platform == 'win32-cross'
+        run: |
+          cd depends/deps-win32
+          chmod +x build_win_x86_deps.sh
+          ./build_win_x86_deps.sh
+          cd ../..
+
+      - name: Build (Windows i686, cross)
+        if: matrix.platform == 'win32-cross'
+        run: |
+          make distclean || true
+          rm -f config.status
+
+          autoreconf -fi -I./depends/deps-win32/i686-w64-mingw32/share/aclocal
+          ./autogen.sh || true
+
+          ./configure --host=i686-w64-mingw32 \
+            LDFLAGS="-L./depends/deps-win32/i686-w64-mingw32/lib -static" \
+            CFLAGS="-Wall -O2 -fomit-frame-pointer -I./depends/deps-win32/i686-w64-mingw32/include -std=c99 -DWIN32 -DCURL_STATICLIB -DPTW32_STATIC_LIB" \
+            --with-libcurl=depends/deps-win32/i686-w64-mingw32
+
+          make ${MAKEJOBS}
+          i686-w64-mingw32-strip -p --strip-debug --strip-unneeded sugarmaker.exe
+
+      - name: Prepare i686-win artifact
+        if: matrix.platform == 'win32-cross'
+        run: |
+          mkdir -p dist
+          cp sugarmaker.exe dist/
+
+      # ============================================================
       # WINDOWS - MSYS2 (msystem picked per-arch via matrix, set at
       # environment setup time so the shell actually launches in it)
       # ============================================================
@@ -280,25 +355,16 @@ jobs:
             libtool
             pkg-config
 
-      - name: Install Windows x86/x64 dependencies
-        if: matrix.platform == 'windows' && matrix.arch != 'arm64'
+      - name: Install Windows x86_64 dependencies
+        if: matrix.platform == 'windows' && matrix.arch == 'x86_64'
         shell: msys2 {0}
         run: |
-          if [ "${{ matrix.arch }}" = "i686" ]; then
-            pacman -S --noconfirm \
-              mingw-w64-i686-toolchain \
-              mingw-w64-i686-curl \
-              mingw-w64-i686-jansson \
-              mingw-w64-i686-openssl \
-              mingw-w64-i686-gmp
-          else
-            pacman -S --noconfirm \
-              mingw-w64-x86_64-toolchain \
-              mingw-w64-x86_64-curl \
-              mingw-w64-x86_64-jansson \
-              mingw-w64-x86_64-openssl \
-              mingw-w64-x86_64-gmp
-          fi
+          pacman -S --noconfirm \
+            mingw-w64-x86_64-toolchain \
+            mingw-w64-x86_64-curl \
+            mingw-w64-x86_64-jansson \
+            mingw-w64-x86_64-openssl \
+            mingw-w64-x86_64-gmp
 
       - name: Install Windows ARM64 dependencies
         if: matrix.platform == 'windows' && matrix.arch == 'arm64'
@@ -329,14 +395,7 @@ jobs:
           mkdir -p dist
           cp sugarmaker.exe dist/
 
-          if [ "${{ matrix.arch }}" = "i686" ]; then
-            DLL_DIR="/mingw32/bin"
-            cp "$DLL_DIR/libcurl-4.dll" dist/ || true
-            cp "$DLL_DIR/libgmp-10.dll" dist/ || true
-            cp "$DLL_DIR/libjansson-4.dll" dist/ || true
-            cp "$DLL_DIR/libwinpthread-1.dll" dist/ || true
-
-          elif [ "${{ matrix.arch }}" = "x86_64" ]; then
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
             DLL_DIR="/mingw64/bin"
             ldd sugarmaker.exe \
               | grep "$DLL_DIR" \
@@ -361,7 +420,7 @@ jobs:
       # ARTIFACTS
       # ============================================================
       - name: Prepare Linux/macOS artifact
-        if: matrix.platform != 'windows'
+        if: matrix.platform != 'windows' && matrix.platform != 'win32-cross'
         run: |
           mkdir -p dist
           cp sugarmaker dist/

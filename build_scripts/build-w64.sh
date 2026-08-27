@@ -3,14 +3,14 @@ make distclean || echo clean
 rm -f config.status
 
 # DEPS
-# cd deps-win64
+# cd depends/deps-win64
 # ./build_win_x64_deps.sh
-# cd ..
+# cd ../..
 
 # BUILD
-autoreconf -fi -I./deps-win64/x86_64-w64-mingw32/share/aclocal
+autoreconf -fi -I./depends/deps-win64/x86_64-w64-mingw32/share/aclocal
 ./autogen.sh
-./configure --host=x86_64-w64-mingw32 LDFLAGS="-L./deps-win64/x86_64-w64-mingw32/lib -static" CFLAGS="-Wall -O2 -fomit-frame-pointer -I./deps-win64/x86_64-w64-mingw32/include -std=c99 -DWIN32 -DCURL_STATICLIB -DPTW32_STATIC_LIB" --with-libcurl=deps-win64/x86_64-w64-mingw32
+./configure --host=x86_64-w64-mingw32 LDFLAGS="-L./depends/deps-win64/x86_64-w64-mingw32/lib -static" CFLAGS="-Wall -O2 -fomit-frame-pointer -I./depends/deps-win64/x86_64-w64-mingw32/include -std=c99 -DWIN32 -DCURL_STATICLIB -DPTW32_STATIC_LIB" --with-libcurl=depends/deps-win64/x86_64-w64-mingw32
 make
 strip -p --strip-debug --strip-unneeded sugarmaker.exe
 

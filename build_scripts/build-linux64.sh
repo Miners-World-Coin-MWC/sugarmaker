@@ -6,9 +6,9 @@ make distclean || echo clean
 rm -f config.status
 
 # DEPENDS
-# cd deps-linux64/
+# cd depends/deps-linux64/
 # ./deps-linux64.sh
-# cd ..
+# cd ../..
 
 # BUILD
 ./autogen.sh
