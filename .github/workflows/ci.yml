@@ -138,6 +138,16 @@ jobs:
         run: |
           UBUNTU_CODENAME="$(lsb_release -cs)"
 
+          # The default sources.list on GitHub's Ubuntu runners has no
+          # [arch=...] restriction, so once a foreign architecture is
+          # enabled, apt tries to fetch it from archive.ubuntu.com and
+          # security.ubuntu.com too - which don't host arm64/armhf/riscv64
+          # at all (only ports.ubuntu.com does), causing apt-get update to
+          # 404 and fail outright. Pin the default sources to amd64,i386
+          # first so they're left alone, then add a dedicated ports.ubuntu.com
+          # source scoped to just the architecture this job needs.
+          sudo sed -i -E 's/^deb (\[[^]]*\] )?/deb [arch=amd64,i386] /' /etc/apt/sources.list
+
           # Only touch the foreign architecture this specific job needs.
           # armhf/arm64/riscv64 don't exist in the default archive.ubuntu.com
           # sources on GitHub runners (only amd64/i386 live there) - they're
