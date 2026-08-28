@@ -31,7 +31,7 @@ git clone https://github.com/GerHobbelt/pthread-win32.git
 tar zxvf $CURL_PACKAGE_FILE
 
 cd $CURL_PACKAGE
-./configure --host=i686-w64-mingw32 --disable-shared --enable-static \
+./configure --host=i686-w64-mingw32 --without-libpsl --disable-shared --enable-static \
   --with-schannel --prefix=$PREFIX \
   CFLAGS="-D_WIN32_WINNT=0x0600"
 make install
