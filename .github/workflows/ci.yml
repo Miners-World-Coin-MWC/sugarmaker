@@ -194,6 +194,12 @@ jobs:
             riscv64)    HOST="riscv64-linux-gnu";    export CC="${HOST}-gcc" ;;
           esac
 
+          # Without _GNU_SOURCE, recv()/select() prototypes aren't visible
+          # in this cross toolchain's default standard mode, and curl's own
+          # configure unconditionally adds -Werror-implicit-function-declaration,
+          # turning that into a hard "Unable to link function recv" error.
+          export CFLAGS="-D_GNU_SOURCE"
+
           wget https://curl.se/download/$CURL_PACKAGE_FILE -O $CURL_PACKAGE_FILE
           tar xzf $CURL_PACKAGE_FILE
           cd $CURL_PACKAGE
