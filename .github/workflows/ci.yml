@@ -155,7 +155,16 @@ jobs:
 
           case "${{ matrix.arch }}" in
             i686)
-              sudo apt-get install -y autoconf automake libtool gcc-multilib g++-multilib
+              # i386 lives in the default archive already (unlike
+              # arm64/armhf/riscv64), so the foreign-arch approach that
+              # broke the others actually works fine here - no need to
+              # change this one.
+              sudo dpkg --add-architecture i386
+              sudo apt-get update
+              sudo apt-get install -y \
+                autoconf automake libtool pkg-config \
+                gcc-multilib g++-multilib \
+                libcurl4-openssl-dev:i386
               ;;
             armv7l)
               sudo apt-get install -y autoconf automake libtool \
@@ -172,7 +181,7 @@ jobs:
           esac
 
       - name: Build static libcurl for cross target
-        if: matrix.platform == 'linux' && matrix.native == false
+        if: matrix.platform == 'linux' && matrix.native == false && matrix.arch != 'i686'
         run: |
           CURL_VERSION=8.19.0
           CURL_PACKAGE=curl-${CURL_VERSION}
@@ -180,7 +189,6 @@ jobs:
           CURL_PREFIX="${PWD}/curl-cross-${{ matrix.arch }}"
 
           case "${{ matrix.arch }}" in
-            i686)       HOST="i686-linux-gnu";       export CC="gcc";    export CFLAGS="-m32" ;;
             armv7l)     HOST="arm-linux-gnueabihf";  export CC="${HOST}-gcc" ;;
             aarch64)    HOST="aarch64-linux-gnu";    export CC="${HOST}-gcc" ;;
             riscv64)    HOST="riscv64-linux-gnu";    export CC="${HOST}-gcc" ;;
@@ -220,14 +228,27 @@ jobs:
           export RANLIB="${HOST}-ranlib"
           export STRIP="${HOST}-strip"
 
+          if [ "${{ matrix.arch }}" = "i686" ]; then
+            # i686 links against the apt-installed i386 libcurl via
+            # pkg-config, same as it did before - this path was already
+            # working, only armv7l/aarch64/riscv64 needed the from-source
+            # rewrite.
+            export CC="gcc"
+            export CXX="g++"
+            unset AR RANLIB STRIP
+            export CFLAGS="-m32"
+            export CXXFLAGS="-m32"
+            export LDFLAGS="-m32"
+            export PKG_CONFIG_PATH=""
+            export PKG_CONFIG_LIBDIR="/usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+            export PKG_CONFIG_ALLOW_CROSS=1
+
+            ./configure --host="${HOST}" --with-curl
+            make ${MAKEJOBS}
+            exit 0
+          fi
+
           case "${{ matrix.arch }}" in
-            i686)
-              export CC="gcc"
-              export CXX="g++"
-              unset AR RANLIB STRIP
-              export CFLAGS="-m32"
-              export CXXFLAGS="-m32"
-              ;;
             armv7l)
               export CFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
               export CXXFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
