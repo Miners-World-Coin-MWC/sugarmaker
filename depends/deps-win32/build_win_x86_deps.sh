@@ -37,7 +37,23 @@ cd $CURL_PACKAGE
 make install
 
 cd ../pthread-win32/
+
 cp config.h pthreads_win32_config.h
-make -f GNUmakefile CROSS="i686-w64-mingw32-" clean GC-static
+
+# Build pthread-win32 static library.
+# The bundled version.rc is not required by Sugarmaker and fails
+# with modern MinGW windres due to its cleanup-style detection.
+make -f GNUmakefile \
+  CROSS="i686-w64-mingw32-" \
+  clean
+
+make -f GNUmakefile \
+  CROSS="i686-w64-mingw32-" \
+  XOPT="-DPTW32_BUILD_INLINED -DPTW32_STATIC_LIB" \
+  CLEANUP=-D__CLEANUP_C \
+  XC_FLAGS="" \
+  OBJ="pthread.o" \
+  libpthreadGC2.inlined_static_stamp
+
 cp libpthreadGC2.a ${PREFIX}/lib/libpthread.a
 cp pthread.h semaphore.h sched.h ${PREFIX}/include
