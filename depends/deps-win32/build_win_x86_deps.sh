@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+
 PREFIX=${PWD}/i686-w64-mingw32
 
 # curl 7.54.1 (2017) is pinned here historically, but its bundled libtool
@@ -20,8 +21,7 @@ wget https://curl.se/download/$CURL_PACKAGE_FILE -O $CURL_PACKAGE_FILE
 # where this was written, and hardcoding a wrong one just breaks the build
 # again. HTTPS already gives you transport integrity/authenticity; this
 # just logs the hash so you can pin it yourself if you want strict
-# reproducibility (compare against the value shown on https://curl.se/download.html
-# or the release's .asc signature).
+# reproducibility.
 echo "Downloaded ${CURL_PACKAGE_FILE}, sha256:"
 sha256sum $CURL_PACKAGE_FILE
 
@@ -31,9 +31,16 @@ git clone https://github.com/GerHobbelt/pthread-win32.git
 tar zxvf $CURL_PACKAGE_FILE
 
 cd $CURL_PACKAGE
-./configure --host=i686-w64-mingw32 --without-libpsl --disable-shared --enable-static \
-  --with-schannel --prefix=$PREFIX \
+
+./configure \
+  --host=i686-w64-mingw32 \
+  --without-libpsl \
+  --disable-shared \
+  --enable-static \
+  --with-schannel \
+  --prefix=$PREFIX \
   CFLAGS="-D_WIN32_WINNT=0x0600"
+
 make install
 
 cd ../pthread-win32/
@@ -41,19 +48,25 @@ cd ../pthread-win32/
 cp config.h pthreads_win32_config.h
 
 # Build pthread-win32 static library.
-# The bundled version.rc is not required by Sugarmaker and fails
-# with modern MinGW windres due to its cleanup-style detection.
+#
+# The pthread-win32 version.rc expects PTW32_CLEANUP_C when
+# building with MinGW. Older build logic only supplied
+# __CLEANUP_C, which causes modern windres to stop with:
+#
+#   Resource compiler doesn't know which cleanup style you're using
+#
+# Supply both definitions so the C sources and version.rc remain
+# compatible.
+
 make -f GNUmakefile \
   CROSS="i686-w64-mingw32-" \
   clean
 
 make -f GNUmakefile \
   CROSS="i686-w64-mingw32-" \
-  XOPT="-DPTW32_BUILD_INLINED -DPTW32_STATIC_LIB" \
-  CLEANUP=-D__CLEANUP_C \
-  XC_FLAGS="" \
-  OBJ="pthread.o" \
-  libpthreadGC2.inlined_static_stamp
+  CFLAGS="-DPTW32_CLEANUP_C -D__CLEANUP_C" \
+  RCFLAGS="-DPTW32_CLEANUP_C -D__CLEANUP_C" \
+  GC-static
 
 cp libpthreadGC2.a ${PREFIX}/lib/libpthread.a
 cp pthread.h semaphore.h sched.h ${PREFIX}/include
