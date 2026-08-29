@@ -357,7 +357,7 @@ jobs:
             --with-curl="$(pwd)/depends/deps-win32/i686-w64-mingw32" \
             LDFLAGS="-static" \
             CFLAGS="-Wall -O2 -fomit-frame-pointer -std=c99 -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB" \
-            LIBS="-lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi" \
+            LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi" \
           || { echo "===== configure failed - dumping relevant config.log ====="; grep -B5 -A 40 "curl_easy_init" config.log || tail -100 config.log; exit 1; }
 
           make ${MAKEJOBS}
