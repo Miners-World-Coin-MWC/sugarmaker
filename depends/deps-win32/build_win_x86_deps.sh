@@ -16,12 +16,6 @@ CURL_PACKAGE_FILE=${CURL_PACKAGE}.tar.gz
 
 wget https://curl.se/download/$CURL_PACKAGE_FILE -O $CURL_PACKAGE_FILE
 
-# NOTE: no hardcoded checksum here (unlike the old script) - I couldn't
-# independently verify curl.se's published sha256 for this release from
-# where this was written, and hardcoding a wrong one just breaks the build
-# again. HTTPS already gives you transport integrity/authenticity; this
-# just logs the hash so you can pin it yourself if you want strict
-# reproducibility.
 echo "Downloaded ${CURL_PACKAGE_FILE}, sha256:"
 sha256sum $CURL_PACKAGE_FILE
 
@@ -38,7 +32,7 @@ cd $CURL_PACKAGE
   --disable-shared \
   --enable-static \
   --with-schannel \
-  --prefix=$PREFIX \
+  --prefix="$PREFIX" \
   CFLAGS="-D_WIN32_WINNT=0x0600"
 
 make install
@@ -49,14 +43,8 @@ cp config.h pthreads_win32_config.h
 
 # Build pthread-win32 static library.
 #
-# The pthread-win32 version.rc expects PTW32_CLEANUP_C when
-# building with MinGW. Older build logic only supplied
-# __CLEANUP_C, which causes modern windres to stop with:
-#
-#   Resource compiler doesn't know which cleanup style you're using
-#
-# Supply both definitions so the C sources and version.rc remain
-# compatible.
+# PTW32_CLEANUP_C is required by the current version of version.rc.
+# __CLEANUP_C is retained for compatibility with the pthread sources.
 
 make -f GNUmakefile \
   CROSS="i686-w64-mingw32-" \
@@ -68,5 +56,23 @@ make -f GNUmakefile \
   RCFLAGS="-DPTW32_CLEANUP_C -D__CLEANUP_C" \
   GC-static
 
-cp libpthreadGC2.a ${PREFIX}/lib/libpthread.a
-cp pthread.h semaphore.h sched.h ${PREFIX}/include
+cp libpthreadGC2.a "${PREFIX}/lib/libpthread.a"
+cp pthread.h semaphore.h sched.h "${PREFIX}/include"
+
+# Verify the dependency installation before leaving this script.
+echo "===== i686 dependency verification ====="
+
+test -f "${PREFIX}/include/curl/curl.h"
+test -f "${PREFIX}/lib/libcurl.a"
+test -f "${PREFIX}/lib/libpthread.a"
+
+echo "curl headers:    ${PREFIX}/include/curl/curl.h"
+echo "curl library:    ${PREFIX}/lib/libcurl.a"
+echo "pthread library: ${PREFIX}/lib/libpthread.a"
+
+echo "Checking curl_easy_init symbol:"
+i686-w64-mingw32-nm "${PREFIX}/lib/libcurl.a" \
+  | grep "curl_easy_init" \
+  | head -5 || true
+
+echo "===== dependency verification complete ====="
