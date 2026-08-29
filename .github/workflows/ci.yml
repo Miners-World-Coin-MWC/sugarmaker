@@ -194,18 +194,14 @@ jobs:
             riscv64)    HOST="riscv64-linux-gnu";    export CC="${HOST}-gcc" ;;
           esac
 
-          # NOTE: -D_GNU_SOURCE alone did NOT fix this (confirmed by a
-          # real failed run) - leaving it in is harmless but it wasn't the
-          # actual cause. The real issue: curl's configure fails to "link"
-          # select()/recv() specifically on this cross toolchain even
-          # though other socket functions (connect, gethostbyname) link
-          # fine on the same setup - a known-flaky autoconf check under
-          # cross-compilation. Pre-seeding the cache variables autoconf
-          # would otherwise compute via that test tells configure to
-          # trust the answer instead of re-running the unreliable check.
-          export CFLAGS="-D_GNU_SOURCE"
-          export ac_cv_func_recv=yes
-          export ac_cv_func_select=yes
+          # CONFIRMED (from curl's own configure output on a real run):
+          # "CFLAGS should only be used to specify C compiler flags, not
+          # macro definitions. Use CPPFLAGS for: -D_GNU_SOURCE" - curl's
+          # build explicitly flags/strips -D macros passed via CFLAGS,
+          # which is exactly why setting -D_GNU_SOURCE via CFLAGS
+          # previously did nothing. Moving it to CPPFLAGS as curl itself
+          # instructs.
+          export CPPFLAGS="-D_GNU_SOURCE"
 
           wget https://curl.se/download/$CURL_PACKAGE_FILE -O $CURL_PACKAGE_FILE
           tar xzf $CURL_PACKAGE_FILE
@@ -361,7 +357,7 @@ jobs:
             --with-curl="$(pwd)/depends/deps-win32/i686-w64-mingw32" \
             LDFLAGS="-static" \
             CFLAGS="-Wall -O2 -fomit-frame-pointer -std=c99 -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB" \
-            LIBS="-lws2_32 -lcrypt32 -lsecur32 -lwldap32" \
+            LIBS="-lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi" \
           || { echo "===== configure failed - dumping relevant config.log ====="; grep -B5 -A 40 "curl_easy_init" config.log || tail -100 config.log; exit 1; }
 
           make ${MAKEJOBS}
