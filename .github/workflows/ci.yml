@@ -194,11 +194,18 @@ jobs:
             riscv64)    HOST="riscv64-linux-gnu";    export CC="${HOST}-gcc" ;;
           esac
 
-          # Without _GNU_SOURCE, recv()/select() prototypes aren't visible
-          # in this cross toolchain's default standard mode, and curl's own
-          # configure unconditionally adds -Werror-implicit-function-declaration,
-          # turning that into a hard "Unable to link function recv" error.
+          # NOTE: -D_GNU_SOURCE alone did NOT fix this (confirmed by a
+          # real failed run) - leaving it in is harmless but it wasn't the
+          # actual cause. The real issue: curl's configure fails to "link"
+          # select()/recv() specifically on this cross toolchain even
+          # though other socket functions (connect, gethostbyname) link
+          # fine on the same setup - a known-flaky autoconf check under
+          # cross-compilation. Pre-seeding the cache variables autoconf
+          # would otherwise compute via that test tells configure to
+          # trust the answer instead of re-running the unreliable check.
           export CFLAGS="-D_GNU_SOURCE"
+          export ac_cv_func_recv=yes
+          export ac_cv_func_select=yes
 
           wget https://curl.se/download/$CURL_PACKAGE_FILE -O $CURL_PACKAGE_FILE
           tar xzf $CURL_PACKAGE_FILE
@@ -336,10 +343,20 @@ jobs:
           autoreconf -fi -I./depends/deps-win32/i686-w64-mingw32/share/aclocal
           ./autogen.sh || true
 
+          # NOTE: sugarmaker's own configure.ac does NOT support a
+          # --with-libcurl=DIR flag (autoconf warns "unrecognized options"
+          # and silently ignores it) - curl detection here is a plain
+          # AC_CHECK_LIB(curl, curl_easy_init) test using CPPFLAGS/LDFLAGS.
+          # That test only links "-lcurl" by default, which fails against
+          # our *static* libcurl.a (built with Schannel + winldap) because
+          # it has unresolved references into Windows system libraries -
+          # ws2_32 (sockets), crypt32/secur32 (Schannel), wldap32 (winldap).
+          # LIBS supplies those so both the detection test and the real
+          # final link succeed.
           ./configure --host=i686-w64-mingw32 \
             LDFLAGS="-L./depends/deps-win32/i686-w64-mingw32/lib -static" \
             CFLAGS="-Wall -O2 -fomit-frame-pointer -I./depends/deps-win32/i686-w64-mingw32/include -std=c99 -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB" \
-            --with-libcurl=depends/deps-win32/i686-w64-mingw32
+            LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32"
 
           make ${MAKEJOBS}
           i686-w64-mingw32-strip -p --strip-debug --strip-unneeded sugarmaker.exe
