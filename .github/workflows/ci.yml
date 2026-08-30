@@ -21,34 +21,58 @@ jobs:
 
     strategy:
       fail-fast: false
+
       matrix:
         include:
-          # ======================
+
+          # ============================================================
           # LINUX
-          # ======================
+          # ============================================================
+
           - name: x86_64-linux
             os: ubuntu-22.04
             platform: linux
             arch: x86_64
-          
+            native: true
+
           - name: i686-linux
             os: ubuntu-22.04
             platform: linux
             arch: i686
+            native: false
+            cross_host: i686-linux-gnu
 
           - name: armv7l-linux
             os: ubuntu-22.04
             platform: linux
             arch: armv7l
+            native: false
+            cross_host: arm-linux-gnueabihf
 
           - name: aarch64-linux
             os: ubuntu-22.04
             platform: linux
             arch: aarch64
+            native: false
+            cross_host: aarch64-linux-gnu
 
-          # ======================
+          - name: aarch64-linux-native
+            os: ubuntu-24.04-arm
+            platform: linux
+            arch: aarch64
+            native: true
+
+          - name: riscv64-linux
+            os: ubuntu-22.04
+            platform: linux
+            arch: riscv64
+            native: false
+            cross_host: riscv64-linux-gnu
+
+          # ============================================================
           # MACOS
-          # ======================
+          # ============================================================
+
           - name: x86_64-macos
             os: macos-15-intel
             platform: macos
@@ -61,135 +85,944 @@ jobs:
             arch: arm64
             host: arm64-apple-darwin
 
-          # ======================
+          # ============================================================
           # WINDOWS
-          # ======================
+          # ============================================================
+
           - name: x86_64-win
             os: windows-latest
             platform: windows
             arch: x86_64
+            msystem: MINGW64
 
           - name: i686-win
-            os: windows-latest
-            platform: windows
+            os: ubuntu-22.04
+            platform: win32-cross
             arch: i686
 
+          - name: arm64-win
+            os: windows-11-arm
+            platform: windows
+            arch: arm64
+            msystem: CLANGARM64
+
     steps:
+
+      # ================================================================
+      # CHECKOUT
+      # ================================================================
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      # =================================================
-      # LINUX
-      # =================================================
-      - name: Install Linux deps
-        if: matrix.platform == 'linux'
+      # ================================================================
+      # LINUX - NATIVE DEPENDENCIES
+      # ================================================================
+
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux' && matrix.native == true
+        shell: bash
         run: |
+          set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
-            build-essential autoconf automake libtool pkg-config \
-            libcurl4-openssl-dev libjansson-dev libssl-dev libgmp-dev
+            build-essential \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            libcurl4-openssl-dev \
+            libjansson-dev \
+            libssl-dev \
+            libgmp-dev
 
-      - name: Build (Linux)
-        if: matrix.platform == 'linux'
+      # ================================================================
+      # LINUX - CROSS TOOLCHAINS
+      # ================================================================
+
+      - name: Install Linux cross toolchain
+        if: matrix.platform == 'linux' && matrix.native == false
+        shell: bash
         run: |
+          set -e
+
+          sudo apt-get update
+
+          case "${{ matrix.arch }}" in
+
+            i686)
+              sudo dpkg --add-architecture i386
+              sudo apt-get update
+
+              sudo apt-get install -y \
+                autoconf \
+                automake \
+                libtool \
+                pkg-config \
+                gcc-multilib \
+                g++-multilib \
+                libcurl4-openssl-dev:i386
+              ;;
+
+            armv7l)
+              sudo apt-get install -y \
+                autoconf \
+                automake \
+                libtool \
+                pkg-config \
+                gcc-arm-linux-gnueabihf \
+                g++-arm-linux-gnueabihf
+              ;;
+
+            aarch64)
+              sudo apt-get install -y \
+                autoconf \
+                automake \
+                libtool \
+                pkg-config \
+                gcc-aarch64-linux-gnu \
+                g++-aarch64-linux-gnu
+              ;;
+
+            riscv64)
+              sudo apt-get install -y \
+                autoconf \
+                automake \
+                libtool \
+                pkg-config \
+                gcc-riscv64-linux-gnu \
+                g++-riscv64-linux-gnu
+              ;;
+
+            *)
+              echo "Unsupported architecture: ${{ matrix.arch }}"
+              exit 1
+              ;;
+
+          esac
+
+      # ================================================================
+      # LINUX - BUILD STATIC CURL FOR CROSS TARGETS
+      # ================================================================
+
+      - name: Build static libcurl for cross target
+        if: matrix.platform == 'linux' && matrix.native == false && matrix.arch != 'i686'
+        shell: bash
+        run: |
+          set -e
+
+          CURL_VERSION=8.19.0
+          CURL_PACKAGE="curl-${CURL_VERSION}"
+          CURL_PACKAGE_FILE="${CURL_PACKAGE}.tar.gz"
+          CURL_PREFIX="${PWD}/curl-cross-${{ matrix.arch }}"
+
+          case "${{ matrix.arch }}" in
+
+            armv7l)
+              HOST="arm-linux-gnueabihf"
+
+              export CC="${HOST}-gcc"
+              export CXX="${HOST}-g++"
+              export AR="${HOST}-ar"
+              export RANLIB="${HOST}-ranlib"
+              export STRIP="${HOST}-strip"
+
+              export CFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+              export CXXFLAGS="${CFLAGS}"
+              ;;
+
+            aarch64)
+              HOST="aarch64-linux-gnu"
+
+              export CC="${HOST}-gcc"
+              export CXX="${HOST}-g++"
+              export AR="${HOST}-ar"
+              export RANLIB="${HOST}-ranlib"
+              export STRIP="${HOST}-strip"
+
+              export CFLAGS="-march=armv8-a"
+              export CXXFLAGS="${CFLAGS}"
+              ;;
+
+            riscv64)
+              HOST="riscv64-linux-gnu"
+
+              export CC="${HOST}-gcc"
+              export CXX="${HOST}-g++"
+              export AR="${HOST}-ar"
+              export RANLIB="${HOST}-ranlib"
+              export STRIP="${HOST}-strip"
+
+              export CFLAGS="-march=rv64gc -mabi=lp64d"
+              export CXXFLAGS="${CFLAGS}"
+              ;;
+
+            *)
+              echo "Unsupported architecture"
+              exit 1
+              ;;
+
+          esac
+
+          echo "============================================================"
+          echo "Building static curl"
+          echo "Target : ${HOST}"
+          echo "Prefix : ${CURL_PREFIX}"
+          echo "CC     : ${CC}"
+          echo "CFLAGS : ${CFLAGS}"
+          echo "============================================================"
+
+          wget -q \
+            "https://curl.se/download/${CURL_PACKAGE_FILE}" \
+            -O "${CURL_PACKAGE_FILE}"
+
+          tar xzf "${CURL_PACKAGE_FILE}"
+
+          cd "${CURL_PACKAGE}"
+
+          export PKG_CONFIG_PATH=""
+          export PKG_CONFIG_LIBDIR=""
+          export PKG_CONFIG_ALLOW_CROSS=1
+
+          ./configure \
+            --build=x86_64-pc-linux-gnu \
+            --host="${HOST}" \
+            --prefix="${CURL_PREFIX}" \
+            --disable-shared \
+            --enable-static \
+            --without-ssl \
+            --without-zlib \
+            --without-brotli \
+            --without-zstd \
+            --without-libidn2 \
+            --without-libpsl \
+            --without-nghttp2 \
+            --without-nghttp3 \
+            --without-ngtcp2 \
+            --without-quiche \
+            --without-libssh2 \
+            --without-librtmp \
+            --disable-ldap \
+            --disable-ldaps \
+            --disable-rtsp \
+            --disable-dict \
+            --disable-telnet \
+            --disable-tftp \
+            --disable-pop3 \
+            --disable-imap \
+            --disable-smtp \
+            --disable-gopher \
+            --disable-mqtt \
+            --disable-unix-sockets
+
+          make ${MAKEJOBS}
+
+          make install
+
+          cd ..
+
+          echo "CURL_PREFIX=${CURL_PREFIX}" >> "$GITHUB_ENV"
+
+          echo "============================================================"
+          echo "Static curl installed"
+          echo "============================================================"
+
+          test -f "${CURL_PREFIX}/lib/libcurl.a"
+          test -f "${CURL_PREFIX}/include/curl/curl.h"
+
+          ls -lh "${CURL_PREFIX}/lib/libcurl.a"
+
+      # ================================================================
+      # LINUX - NATIVE BUILD
+      # ================================================================
+
+      - name: Build (Linux, native)
+        if: matrix.platform == 'linux' && matrix.native == true
+        shell: bash
+        run: |
+          set -e
+
           ./autogen.sh || true
-          ./configure --with-curl
-          make -j3
 
-      # =================================================
-      # MACOS
-      # =================================================
-      - name: Install macOS deps
-        if: matrix.platform == 'macos'
+          ./configure \
+            --with-curl
+
+          make ${MAKEJOBS}
+
+      # ================================================================
+      # LINUX - CROSS BUILD
+      # ================================================================
+
+      - name: Build (Linux, cross)
+        if: matrix.platform == 'linux' && matrix.native == false
+        shell: bash
         run: |
+          set -e
+
+          ./autogen.sh || true
+
+          HOST="${{ matrix.cross_host }}"
+
+          echo "============================================================"
+          echo "Cross compiling Sugarmaker"
+          echo "Target: ${HOST}"
+          echo "============================================================"
+
+          export CC="${HOST}-gcc"
+          export CXX="${HOST}-g++"
+          export AR="${HOST}-ar"
+          export RANLIB="${HOST}-ranlib"
+          export STRIP="${HOST}-strip"
+
+          if [ "${{ matrix.arch }}" = "i686" ]; then
+
+            export CC="gcc"
+            export CXX="g++"
+
+            unset AR
+            unset RANLIB
+            unset STRIP
+
+            export CFLAGS="-m32"
+            export CXXFLAGS="-m32"
+            export LDFLAGS="-m32"
+
+            export PKG_CONFIG_PATH=""
+            export PKG_CONFIG_LIBDIR="/usr/lib/i386-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+            export PKG_CONFIG_ALLOW_CROSS=1
+
+            ./configure \
+              --host="${HOST}" \
+              --with-curl
+
+            make ${MAKEJOBS}
+
+            exit 0
+          fi
+
+          case "${{ matrix.arch }}" in
+
+            armv7l)
+              export CFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+              export CXXFLAGS="${CFLAGS}"
+              ;;
+
+            aarch64)
+              export CFLAGS="-march=armv8-a"
+              export CXXFLAGS="${CFLAGS}"
+              ;;
+
+            riscv64)
+              export CFLAGS="-march=rv64gc -mabi=lp64d"
+              export CXXFLAGS="${CFLAGS}"
+              ;;
+
+          esac
+
+          echo "CC=${CC}"
+          echo "CXX=${CXX}"
+          echo "CFLAGS=${CFLAGS}"
+          echo "CURL_PREFIX=${CURL_PREFIX}"
+
+          test -n "${CURL_PREFIX}"
+          test -f "${CURL_PREFIX}/lib/libcurl.a"
+
+          ./configure \
+            --host="${HOST}" \
+            --with-curl="${CURL_PREFIX}" \
+            CFLAGS="${CFLAGS}" \
+            CXXFLAGS="${CXXFLAGS}" \
+            LDFLAGS="-static" \
+          || {
+            echo "============================================================"
+            echo "Sugarmaker configure failed"
+            echo "============================================================"
+
+            if [ -f config.log ]; then
+              tail -250 config.log
+            fi
+
+            exit 1
+          }
+
+          make ${MAKEJOBS}
+
+      # ================================================================
+      # MACOS - DEPENDENCIES
+      # ================================================================
+
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -e
+
           brew update
-          brew install automake autoconf libtool pkg-config \
-                       curl jansson openssl gmp
+
+          brew install \
+            automake \
+            autoconf \
+            libtool \
+            pkg-config \
+            curl \
+            jansson \
+            openssl \
+            gmp
+
+      # ================================================================
+      # MACOS - BUILD
+      # ================================================================
 
       - name: Build (macOS)
         if: matrix.platform == 'macos'
+        shell: bash
         run: |
+          set -e
+
           ./autogen.sh || true
 
           BREW_PREFIX="$(brew --prefix)"
+
           export CPPFLAGS="-I${BREW_PREFIX}/include"
           export LDFLAGS="-L${BREW_PREFIX}/lib"
 
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             export CFLAGS="-arch x86_64"
             export CXXFLAGS="-arch x86_64"
+
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+            export CFLAGS="-arch arm64"
+            export CXXFLAGS="-arch arm64"
           fi
 
-          ./configure --with-curl --host=${{ matrix.host }}
-          make -j3
+          ./configure \
+            --with-curl \
+            --host="${{ matrix.host }}"
 
-      # =================================================
-      # WINDOWS (MSYS2)
-      # =================================================
+          make ${MAKEJOBS}
+
+      # ================================================================
+      # WINDOWS i686 - CROSS TOOLCHAIN
+      # ================================================================
+
+      - name: Install MinGW-w64 i686 cross toolchain
+        if: matrix.platform == 'win32-cross'
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            gcc-mingw-w64-i686-posix \
+            g++-mingw-w64-i686-posix \
+            binutils-mingw-w64-i686 \
+            mingw-w64-i686-dev \
+            mingw-w64-common \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            build-essential \
+            git \
+            wget \
+            file
+
+          echo "============================================================"
+          echo "MinGW i686 compiler"
+          echo "============================================================"
+
+          i686-w64-mingw32-gcc-posix --version
+          i686-w64-mingw32-g++-posix --version
+
+          printf 'int main(void) { return 0; }\n' > /tmp/mingw-test.c
+
+          i686-w64-mingw32-gcc-posix \
+            /tmp/mingw-test.c \
+            -o /tmp/mingw-test.exe
+
+          file /tmp/mingw-test.exe
+
+          echo "MinGW i686 compiler test passed."
+
+      # ================================================================
+      # WINDOWS i686 - BUILD DEPENDENCIES
+      # ================================================================
+
+      - name: Build depends/deps-win32
+        if: matrix.platform == 'win32-cross'
+        shell: bash
+        run: |
+          set -e
+
+          cd depends/deps-win32
+
+          chmod +x build_win_x86_deps.sh
+
+          ./build_win_x86_deps.sh
+
+          cd ../..
+
+          CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
+
+          echo "CURL_PREFIX=${CURL_PREFIX}" >> "$GITHUB_ENV"
+
+          echo "============================================================"
+          echo "Checking Windows i686 dependencies"
+          echo "============================================================"
+
+          test -f "${CURL_PREFIX}/lib/libcurl.a"
+
+          echo "Found:"
+          echo "  ${CURL_PREFIX}/lib/libcurl.a"
+
+      # ================================================================
+      # WINDOWS i686 - BUILD 
+      # ================================================================
+      - name: Build (Windows i686, cross)
+        if: matrix.platform == 'win32-cross'
+        shell: bash
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "Preparing Windows i686 build"
+          echo "============================================================"
+
+          rm -f config.status
+          rm -f config.cache
+
+          export HOST="i686-w64-mingw32"
+
+          export CC="i686-w64-mingw32-gcc-posix"
+          export CXX="i686-w64-mingw32-g++-posix"
+          export AR="i686-w64-mingw32-ar"
+          export RANLIB="i686-w64-mingw32-ranlib"
+          export STRIP="i686-w64-mingw32-strip"
+
+          CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
+
+          # ------------------------------------------------------------
+          # Compiler flags
+          # ------------------------------------------------------------
+
+          export CFLAGS="-Wall -O2 -fomit-frame-pointer -std=c99 -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
+
+          export CXXFLAGS="-Wall -O2 -fomit-frame-pointer -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
+
+          export CPPFLAGS="-I${CURL_PREFIX}/include"
+
+          export LDFLAGS="-static -L${CURL_PREFIX}/lib"
+
+          echo "============================================================"
+          echo "Compiler configuration"
+          echo "============================================================"
+
+          echo "HOST=${HOST}"
+          echo "CC=${CC}"
+          echo "CXX=${CXX}"
+          echo "AR=${AR}"
+          echo "RANLIB=${RANLIB}"
+          echo "STRIP=${STRIP}"
+          echo "CURL_PREFIX=${CURL_PREFIX}"
+          echo "CPPFLAGS=${CPPFLAGS}"
+          echo "CFLAGS=${CFLAGS}"
+          echo "CXXFLAGS=${CXXFLAGS}"
+          echo "LDFLAGS=${LDFLAGS}"
+
+          "${CC}" --version
+
+          # ------------------------------------------------------------
+          # Locate winpthreads
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Locating MinGW winpthreads"
+          echo "============================================================"
+
+          WINPTHREADS_LIB=""
+
+          for candidate in \
+            "/usr/i686-w64-mingw32/lib/libwinpthread.a" \
+            "/usr/lib/gcc/i686-w64-mingw32/10-posix/libwinpthread.a" \
+            "/usr/lib/gcc/i686-w64-mingw32/*-posix/libwinpthread.a" \
+            "/usr/i686-w64-mingw32/lib/libwinpthread-1.dll.a"
+          do
+            for lib in $candidate; do
+              if [ -f "$lib" ]; then
+                WINPTHREADS_LIB="$lib"
+                break 2
+              fi
+            done
+          done
+
+          if [ -z "${WINPTHREADS_LIB}" ]; then
+            echo "ERROR: Could not locate MinGW winpthreads library."
+
+            echo "Searching system:"
+            find /usr \
+              -type f \
+              \( -name "libwinpthread.a" -o -name "libwinpthread-1.dll.a" \) \
+              2>/dev/null \
+              | head -100 || true
+
+            exit 1
+          fi
+
+          WINPTHREADS_DIR="$(dirname "${WINPTHREADS_LIB}")"
+
+          echo "Found winpthreads:"
+          echo "  ${WINPTHREADS_LIB}"
+          echo "Directory:"
+          echo "  ${WINPTHREADS_DIR}"
+
+          export LDFLAGS="${LDFLAGS} -L${WINPTHREADS_DIR}"
+
+          echo "Updated LDFLAGS:"
+          echo "  ${LDFLAGS}"
+
+          # ------------------------------------------------------------
+          # Check libcurl
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Checking libcurl"
+          echo "============================================================"
+
+          test -d "${CURL_PREFIX}"
+          test -d "${CURL_PREFIX}/include"
+          test -d "${CURL_PREFIX}/lib"
+          test -f "${CURL_PREFIX}/lib/libcurl.a"
+          test -f "${CURL_PREFIX}/include/curl/curl.h"
+
+          echo "Found:"
+          echo "  ${CURL_PREFIX}/lib/libcurl.a"
+          echo "  ${CURL_PREFIX}/include/curl/curl.h"
+
+          # ------------------------------------------------------------
+          # Test pthread/winpthreads
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Testing MinGW winpthreads"
+          echo "============================================================"
+
+          cat > /tmp/mingw-pthread-test.c <<'EOF'
+          #include <pthread.h>
+
+          static void *worker(void *arg)
+          {
+              return arg;
+          }
+
+          int main(void)
+          {
+              pthread_t thread;
+              pthread_mutex_t mutex;
+              pthread_cond_t cond;
+
+              pthread_mutex_init(&mutex, NULL);
+              pthread_cond_init(&cond, NULL);
+
+              pthread_create(&thread, NULL, worker, NULL);
+              pthread_join(thread, NULL);
+
+              pthread_cond_destroy(&cond);
+              pthread_mutex_destroy(&mutex);
+
+              return 0;
+          }
+          EOF
+
+          "${CC}" \
+            ${CFLAGS} \
+            ${CPPFLAGS} \
+            /tmp/mingw-pthread-test.c \
+            ${LDFLAGS} \
+            "${WINPTHREADS_LIB}" \
+            -o /tmp/mingw-pthread-test.exe
+
+          file /tmp/mingw-pthread-test.exe
+
+          echo "MinGW i686 winpthreads test passed."
+
+          # ------------------------------------------------------------
+          # Test libcurl + winpthreads
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Testing libcurl + winpthreads"
+          echo "============================================================"
+
+          cat > /tmp/mingw-curl-test.c <<'EOF'
+          #include <curl/curl.h>
+
+          int main(void)
+          {
+              CURL *curl = curl_easy_init();
+
+              if (curl != NULL)
+                  curl_easy_cleanup(curl);
+
+              return 0;
+          }
+          EOF
+
+          "${CC}" \
+            ${CFLAGS} \
+            ${CPPFLAGS} \
+            /tmp/mingw-curl-test.c \
+            ${LDFLAGS} \
+            -lcurl \
+            -lws2_32 \
+            -lcrypt32 \
+            -lsecur32 \
+            -lwldap32 \
+            -lbcrypt \
+            -liphlpapi \
+            "${WINPTHREADS_LIB}" \
+            -o /tmp/mingw-curl-test.exe
+
+          file /tmp/mingw-curl-test.exe
+
+          echo "Direct libcurl + winpthreads link test passed."
+
+          # ------------------------------------------------------------
+          # Regenerate Autotools
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Regenerating Autotools"
+          echo "============================================================"
+
+          autoreconf -fi \
+            -I"${CURL_PREFIX}/share/aclocal"
+
+          # ------------------------------------------------------------
+          # Configure
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Configuring Sugarmaker"
+          echo "============================================================"
+
+          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi ${WINPTHREADS_LIB}"
+
+          ./configure \
+            --build=x86_64-pc-linux-gnu \
+            --host="${HOST}" \
+            --with-curl="${CURL_PREFIX}" \
+            CPPFLAGS="${CPPFLAGS}" \
+            CFLAGS="${CFLAGS}" \
+            CXXFLAGS="${CXXFLAGS}" \
+            LDFLAGS="${LDFLAGS}" \
+            LIBS="${LIBS}" \
+          || {
+            echo "============================================================"
+            echo "WINDOWS i686 CONFIGURE FAILED"
+            echo "============================================================"
+
+            echo "winpthreads:"
+            echo "  ${WINPTHREADS_LIB}"
+
+            echo "libcurl:"
+            ls -lh "${CURL_PREFIX}/lib/libcurl.a"
+
+            if [ -f config.log ]; then
+              echo "============================================================"
+              echo "Relevant linker errors"
+              echo "============================================================"
+
+              grep -n -B10 -A30 \
+                -E "pthread_|winpthread|cannot find -lcurl|cannot find -lpthread|C compiler cannot create executables|checking whether the C compiler works" \
+                config.log || true
+
+              echo "============================================================"
+              echo "Last 300 lines of config.log"
+              echo "============================================================"
+
+              tail -300 config.log
+            fi
+
+            exit 1
+          }
+
+          # ------------------------------------------------------------
+          # Build
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Building Sugarmaker"
+          echo "============================================================"
+
+          make ${MAKEJOBS}
+
+          # ------------------------------------------------------------
+          # Strip
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Stripping executable"
+          echo "============================================================"
+
+          "${STRIP}" \
+            -p \
+            --strip-debug \
+            --strip-unneeded \
+            sugarmaker.exe
+
+          echo "============================================================"
+          echo "Windows i686 build complete"
+          echo "============================================================"
+
+          file sugarmaker.exe
+
+      # ================================================================
+      # WINDOWS i686 - ARTIFACT
+      # ================================================================
+
+      - name: Prepare i686-win artifact
+        if: matrix.platform == 'win32-cross'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p dist
+
+          cp sugarmaker.exe dist/
+
+          file dist/sugarmaker.exe
+
+      # ================================================================
+      # WINDOWS - MSYS2
+      # ================================================================
+
       - name: Setup MSYS2
         if: matrix.platform == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           update: true
+          msystem: ${{ matrix.msystem }}
           install: >
             base-devel
-            automake autoconf libtool pkg-config
-            mingw-w64-x86_64-toolchain
-            mingw-w64-i686-toolchain
-            mingw-w64-x86_64-curl
-            mingw-w64-i686-curl
-            mingw-w64-x86_64-jansson
-            mingw-w64-i686-jansson
-            mingw-w64-x86_64-openssl
-            mingw-w64-i686-openssl
+            autoconf
+            automake
+            libtool
+            pkg-config
+
+      # ================================================================
+      # WINDOWS x86_64 DEPENDENCIES
+      # ================================================================
+
+      - name: Install Windows x86_64 dependencies
+        if: matrix.platform == 'windows' && matrix.arch == 'x86_64'
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          pacman -S --noconfirm \
+            mingw-w64-x86_64-toolchain \
+            mingw-w64-x86_64-curl \
+            mingw-w64-x86_64-jansson \
+            mingw-w64-x86_64-openssl \
             mingw-w64-x86_64-gmp
-            mingw-w64-i686-gmp
+
+      # ================================================================
+      # WINDOWS ARM64 DEPENDENCIES
+      # ================================================================
+
+      - name: Install Windows ARM64 dependencies
+        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          pacman -S --noconfirm \
+            mingw-w64-clang-aarch64-toolchain \
+            mingw-w64-clang-aarch64-curl \
+            mingw-w64-clang-aarch64-jansson \
+            mingw-w64-clang-aarch64-openssl \
+            mingw-w64-clang-aarch64-gmp
+
+      # ================================================================
+      # WINDOWS - BUILD
+      # ================================================================
 
       - name: Build (Windows)
         if: matrix.platform == 'windows'
         shell: msys2 {0}
         run: |
+          set -e
+
           ./autogen.sh || true
 
-          if [ "${{ matrix.arch }}" = "i686" ]; then
-            export MSYSTEM=MINGW32
-          else
-            export MSYSTEM=MINGW64
-          fi
+          ./configure \
+            --with-curl
 
-          ./configure --with-curl
-          make -j3
+          make ${MAKEJOBS}
 
-      # =================================================
-      # WINDOWS DLL BUNDLE
-      # =================================================
+      # ================================================================
+      # WINDOWS - DLL BUNDLE
+      # ================================================================
+
       - name: Bundle Windows DLLs
         if: matrix.platform == 'windows'
         shell: msys2 {0}
         run: |
+          set -e
+
           mkdir -p dist
+
           cp sugarmaker.exe dist/
 
-          if [ "${{ matrix.arch }}" = "i686" ]; then
-            DLL_DIR="/mingw32/bin"
-            cp "$DLL_DIR/libcurl-4.dll" dist/
-            cp "$DLL_DIR/libgmp-10.dll" dist/
-            cp "$DLL_DIR/libjansson-4.dll" dist/
-            cp "$DLL_DIR/libwinpthread-1.dll" dist/
-          else
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+
             DLL_DIR="/mingw64/bin"
-            ldd sugarmaker.exe | grep "$DLL_DIR" | awk '{print $3}' | sort -u | while read dll; do
-              [ -f "$dll" ] && cp "$dll" dist/
-            done
+
+            ldd sugarmaker.exe \
+              | grep "$DLL_DIR" \
+              | awk '{print $3}' \
+              | sort -u \
+              | while read dll; do
+                  [ -f "$dll" ] && cp "$dll" dist/
+                done
+
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+
+            DLL_DIR="/clangarm64/bin"
+
+            ldd sugarmaker.exe \
+              | grep "$DLL_DIR" \
+              | awk '{print $3}' \
+              | sort -u \
+              | while read dll; do
+                  [ -f "$dll" ] && cp "$dll" dist/
+                done
+
           fi
 
-      # =================================================
-      # ARTIFACTS
-      # =================================================
+      # ================================================================
+      # LINUX / MACOS ARTIFACT
+      # ================================================================
+
+      - name: Prepare Linux/macOS artifact
+        if: matrix.platform != 'windows' && matrix.platform != 'win32-cross'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p dist
+
+          cp sugarmaker dist/
+
+      # ================================================================
+      # UPLOAD ARTIFACTS
+      # ================================================================
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sugarmaker-${{ matrix.name }}
-          path: |
-            dist/*
-            sugarmaker
+          path: dist/*
