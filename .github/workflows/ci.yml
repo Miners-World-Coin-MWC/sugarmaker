@@ -579,25 +579,8 @@ jobs:
           echo "  ${CURL_PREFIX}/lib/libcurl.a"
 
       # ================================================================
-      # WINDOWS i686 - BUILD
-      #
-      # i686 ONLY FIX:
-      #
-      # The dependency directory contains libpthread.a, and the final
-      # static link requires pthread to be explicitly available after
-      # the static libraries which reference pthread symbols.
-      #
-      # We therefore:
-      #
-      #   1. Explicitly verify libpthread.a exists.
-      #   2. Put the dependency directory in LDFLAGS.
-      #   3. Keep -lpthread in LIBS.
-      #   4. Keep -lpthread AFTER -lcurl so the static linker can resolve
-      #      pthread_* references pulled from libcurl/other archives.
-      #
-      # NO OTHER TARGET IS CHANGED.
+      # WINDOWS i686 - BUILD 
       # ================================================================
-
       - name: Build (Windows i686, cross)
         if: matrix.platform == 'win32-cross'
         shell: bash
@@ -631,17 +614,18 @@ jobs:
 
           export CPPFLAGS="-I${CURL_PREFIX}/include"
 
-          # Explicitly expose the dependency directory to the linker.
+          # Keep the dependency library directory available to the linker.
           export LDFLAGS="-static -L${CURL_PREFIX}/lib"
 
           # IMPORTANT:
           #
-          # Keep pthread AFTER curl.
+          # pthread is deliberately LAST.
           #
-          # With static archives, the linker processes libraries left to
-          # right. libcurl can introduce pthread_* references, so pthread
-          # must appear after libcurl.
-          export LIBS="-lcurl -lpthread -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi"
+          # With static linking, the MinGW linker resolves libraries from
+          # left to right. Sugarmaker/util.o contains pthread references,
+          # so pthread must appear after the objects/libraries that require it.
+          #
+          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi -lpthread"
 
           echo "============================================================"
           echo "Compiler configuration"
@@ -663,30 +647,64 @@ jobs:
           "${CC}" --version
 
           echo "============================================================"
-          echo "Checking i686 dependency archives"
+          echo "Checking libcurl"
           echo "============================================================"
 
           test -d "${CURL_PREFIX}"
           test -d "${CURL_PREFIX}/include"
           test -d "${CURL_PREFIX}/lib"
-
           test -f "${CURL_PREFIX}/lib/libcurl.a"
-          test -f "${CURL_PREFIX}/lib/libpthread.a"
           test -f "${CURL_PREFIX}/include/curl/curl.h"
 
           echo "Found:"
           echo "  ${CURL_PREFIX}/lib/libcurl.a"
-          echo "  ${CURL_PREFIX}/lib/libpthread.a"
           echo "  ${CURL_PREFIX}/include/curl/curl.h"
 
           echo "============================================================"
-          echo "Inspecting pthread archive"
+          echo "Checking pthread support"
           echo "============================================================"
 
-          "${AR}" t "${CURL_PREFIX}/lib/libpthread.a" | head -30
+          cat > /tmp/mingw-pthread-test.c <<'EOF'
+          #include <pthread.h>
+
+          static void *worker(void *arg)
+          {
+              return arg;
+          }
+
+          int main(void)
+          {
+              pthread_t thread;
+              pthread_mutex_t mutex;
+              pthread_cond_t cond;
+
+              pthread_mutex_init(&mutex, NULL);
+              pthread_cond_init(&cond, NULL);
+
+              pthread_create(&thread, NULL, worker, NULL);
+              pthread_join(thread, NULL);
+
+              pthread_cond_destroy(&cond);
+              pthread_mutex_destroy(&mutex);
+
+              return 0;
+          }
+          EOF
+
+          "${CC}" \
+            ${CFLAGS} \
+            ${CPPFLAGS} \
+            /tmp/mingw-pthread-test.c \
+            ${LDFLAGS} \
+            -lpthread \
+            -o /tmp/mingw-pthread-test.exe
+
+          file /tmp/mingw-pthread-test.exe
+
+          echo "MinGW i686 pthread link test passed."
 
           echo "============================================================"
-          echo "Testing direct libcurl + pthread link"
+          echo "Testing direct libcurl link"
           echo "============================================================"
 
           cat > /tmp/mingw-curl-test.c <<'EOF'
@@ -708,12 +726,19 @@ jobs:
             ${CPPFLAGS} \
             /tmp/mingw-curl-test.c \
             ${LDFLAGS} \
-            ${LIBS} \
+            -lcurl \
+            -lws2_32 \
+            -lcrypt32 \
+            -lsecur32 \
+            -lwldap32 \
+            -lbcrypt \
+            -liphlpapi \
+            -lpthread \
             -o /tmp/mingw-curl-test.exe
 
           file /tmp/mingw-curl-test.exe
 
-          echo "Direct libcurl + pthread link test passed."
+          echo "Direct libcurl link test passed."
 
           echo "============================================================"
           echo "Regenerating Autotools"
@@ -740,10 +765,8 @@ jobs:
             echo "WINDOWS i686 CONFIGURE FAILED"
             echo "============================================================"
 
-            echo "Checking dependency archives again:"
-            ls -lh \
-              "${CURL_PREFIX}/lib/libcurl.a" \
-              "${CURL_PREFIX}/lib/libpthread.a"
+            echo "Checking libcurl again:"
+            ls -lh "${CURL_PREFIX}/lib/libcurl.a"
 
             echo "============================================================"
             echo "Relevant linker errors"
@@ -751,7 +774,7 @@ jobs:
 
             if [ -f config.log ]; then
               grep -n -B10 -A30 \
-                -E "cannot find -lcurl|cannot find -lpthread|undefined reference to.*pthread|C compiler cannot create executables|checking whether the C compiler works" \
+                -E "cannot find -lcurl|cannot find -lpthread|C compiler cannot create executables|checking whether the C compiler works" \
                 config.log || true
 
               echo "============================================================"
