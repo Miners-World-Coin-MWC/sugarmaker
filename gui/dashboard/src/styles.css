@@ -1,0 +1,35 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #101114;
+  color: #e6e6e6;
+}
+.app { padding: 24px; }
+.app-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+.total-hashrate { font-size: 18px; font-weight: 600; }
+.add-rig-row { display: flex; gap: 8px; margin-bottom: 20px; }
+.add-rig-row input {
+  background: #1a1b1f; border: 1px solid #333; color: #e6e6e6;
+  padding: 8px; border-radius: 6px; flex: 1;
+}
+.rig-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+.rig-panel { background: #1a1b1f; border: 1px solid #2a2b30; border-radius: 10px; padding: 14px; }
+.rig-panel-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-dot.running { background: #3ddc84; }
+.status-dot.stopped { background: #666; }
+.subtle { color: #888; font-size: 12px; }
+.rig-error { color: #e08787; font-size: 12px; margin-bottom: 8px; }
+.rig-meta { color: #999; font-size: 12px; margin-bottom: 4px; }
+.rig-total { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
+.worker-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.worker-table th { text-align: left; color: #888; font-weight: 500; font-size: 11px; padding-bottom: 6px; }
+.worker-table td { padding: 4px 0; border-top: 1px solid #26272c; }
+button { background: #2a2b30; border: none; color: #e6e6e6; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+button.small { padding: 3px 8px; font-size: 11px; }
+button.danger { background: #4a1e1e; }

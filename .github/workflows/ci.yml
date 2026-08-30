@@ -1,4 +1,4 @@
-name: Sugarmaker CI
+name: Sugarmaker CI + GUI
 
 on:
   push:
@@ -11,13 +11,18 @@ on:
       - '**/*.md'
   workflow_dispatch:
 
+env:
+  MAKEJOBS: "-j3"
+
 jobs:
+
+  # ========================================================================
+  # BUILD MINER + GUI FOR EVERY TARGET
+  # ========================================================================
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-
-    env:
-      MAKEJOBS: "-j3"
 
     strategy:
       fail-fast: false
@@ -25,15 +30,16 @@ jobs:
       matrix:
         include:
 
-          # ============================================================
+          # ==================================================================
           # LINUX
-          # ============================================================
+          # ==================================================================
 
           - name: x86_64-linux
             os: ubuntu-22.04
             platform: linux
             arch: x86_64
             native: true
+            rust_target: x86_64-unknown-linux-gnu
 
           - name: i686-linux
             os: ubuntu-22.04
@@ -41,6 +47,7 @@ jobs:
             arch: i686
             native: false
             cross_host: i686-linux-gnu
+            rust_target: i686-unknown-linux-gnu
 
           - name: armv7l-linux
             os: ubuntu-22.04
@@ -48,6 +55,7 @@ jobs:
             arch: armv7l
             native: false
             cross_host: arm-linux-gnueabihf
+            rust_target: armv7-unknown-linux-gnueabihf
 
           - name: aarch64-linux
             os: ubuntu-22.04
@@ -55,12 +63,14 @@ jobs:
             arch: aarch64
             native: false
             cross_host: aarch64-linux-gnu
+            rust_target: aarch64-unknown-linux-gnu
 
           - name: aarch64-linux-native
             os: ubuntu-24.04-arm
             platform: linux
             arch: aarch64
             native: true
+            rust_target: aarch64-unknown-linux-gnu
 
           - name: riscv64-linux
             os: ubuntu-22.04
@@ -68,56 +78,87 @@ jobs:
             arch: riscv64
             native: false
             cross_host: riscv64-linux-gnu
+            rust_target: riscv64gc-unknown-linux-gnu
 
-          # ============================================================
+          # ==================================================================
           # MACOS
-          # ============================================================
+          # ==================================================================
 
           - name: x86_64-macos
             os: macos-15-intel
             platform: macos
             arch: x86_64
             host: x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
 
           - name: arm64-macos
             os: macos-latest
             platform: macos
             arch: arm64
             host: arm64-apple-darwin
+            rust_target: aarch64-apple-darwin
 
-          # ============================================================
+          # ==================================================================
           # WINDOWS
-          # ============================================================
+          # ==================================================================
 
           - name: x86_64-win
             os: windows-latest
             platform: windows
             arch: x86_64
+            native: true
             msystem: MINGW64
+            rust_target: x86_64-pc-windows-gnu
 
           - name: i686-win
             os: ubuntu-22.04
             platform: win32-cross
             arch: i686
+            native: false
+            rust_target: i686-pc-windows-gnu
 
           - name: arm64-win
             os: windows-11-arm
             platform: windows
             arch: arm64
+            native: true
             msystem: CLANGARM64
+            rust_target: aarch64-pc-windows-gnullvm
+
 
     steps:
 
-      # ================================================================
+      # ======================================================================
       # CHECKOUT
-      # ================================================================
+      # ======================================================================
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ================================================================
-      # LINUX - NATIVE DEPENDENCIES
-      # ================================================================
+
+      # ======================================================================
+      # NODE
+      # ======================================================================
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+
+      # ======================================================================
+      # RUST
+      # ======================================================================
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+
+      # ======================================================================
+      # LINUX NATIVE DEPENDENCIES
+      # ======================================================================
 
       - name: Install Linux native dependencies
         if: matrix.platform == 'linux' && matrix.native == true
@@ -136,11 +177,16 @@ jobs:
             libcurl4-openssl-dev \
             libjansson-dev \
             libssl-dev \
-            libgmp-dev
+            libgmp-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
-      # ================================================================
-      # LINUX - CROSS TOOLCHAINS
-      # ================================================================
+
+      # ======================================================================
+      # LINUX CROSS TOOLCHAINS
+      # ======================================================================
 
       - name: Install Linux cross toolchain
         if: matrix.platform == 'linux' && matrix.native == false
@@ -163,7 +209,11 @@ jobs:
                 pkg-config \
                 gcc-multilib \
                 g++-multilib \
-                libcurl4-openssl-dev:i386
+                libcurl4-openssl-dev:i386 \
+                libwebkit2gtk-4.1-dev \
+                libappindicator3-dev \
+                librsvg2-dev \
+                patchelf
               ;;
 
             armv7l)
@@ -173,7 +223,11 @@ jobs:
                 libtool \
                 pkg-config \
                 gcc-arm-linux-gnueabihf \
-                g++-arm-linux-gnueabihf
+                g++-arm-linux-gnueabihf \
+                libwebkit2gtk-4.1-dev \
+                libappindicator3-dev \
+                librsvg2-dev \
+                patchelf
               ;;
 
             aarch64)
@@ -183,7 +237,11 @@ jobs:
                 libtool \
                 pkg-config \
                 gcc-aarch64-linux-gnu \
-                g++-aarch64-linux-gnu
+                g++-aarch64-linux-gnu \
+                libwebkit2gtk-4.1-dev \
+                libappindicator3-dev \
+                librsvg2-dev \
+                patchelf
               ;;
 
             riscv64)
@@ -193,21 +251,25 @@ jobs:
                 libtool \
                 pkg-config \
                 gcc-riscv64-linux-gnu \
-                g++-riscv64-linux-gnu
+                g++-riscv64-linux-gnu \
+                libwebkit2gtk-4.1-dev \
+                libappindicator3-dev \
+                librsvg2-dev \
+                patchelf
               ;;
 
             *)
               echo "Unsupported architecture: ${{ matrix.arch }}"
               exit 1
               ;;
-
           esac
 
-      # ================================================================
-      # LINUX - BUILD STATIC CURL FOR CROSS TARGETS
-      # ================================================================
 
-      - name: Build static libcurl for cross target
+      # ======================================================================
+      # LINUX CROSS CURL
+      # ======================================================================
+
+      - name: Build static libcurl for Linux cross target
         if: matrix.platform == 'linux' && matrix.native == false && matrix.arch != 'i686'
         shell: bash
         run: |
@@ -259,20 +321,7 @@ jobs:
               export CXXFLAGS="${CFLAGS}"
               ;;
 
-            *)
-              echo "Unsupported architecture"
-              exit 1
-              ;;
-
           esac
-
-          echo "============================================================"
-          echo "Building static curl"
-          echo "Target : ${HOST}"
-          echo "Prefix : ${CURL_PREFIX}"
-          echo "CC     : ${CC}"
-          echo "CFLAGS : ${CFLAGS}"
-          echo "============================================================"
 
           wget -q \
             "https://curl.se/download/${CURL_PACKAGE_FILE}" \
@@ -318,27 +367,21 @@ jobs:
             --disable-unix-sockets
 
           make ${MAKEJOBS}
-
           make install
 
           cd ..
 
           echo "CURL_PREFIX=${CURL_PREFIX}" >> "$GITHUB_ENV"
 
-          echo "============================================================"
-          echo "Static curl installed"
-          echo "============================================================"
-
           test -f "${CURL_PREFIX}/lib/libcurl.a"
           test -f "${CURL_PREFIX}/include/curl/curl.h"
 
-          ls -lh "${CURL_PREFIX}/lib/libcurl.a"
 
-      # ================================================================
-      # LINUX - NATIVE BUILD
-      # ================================================================
+      # ======================================================================
+      # BUILD MINER - LINUX NATIVE
+      # ======================================================================
 
-      - name: Build (Linux, native)
+      - name: Build Sugarmaker - Linux native
         if: matrix.platform == 'linux' && matrix.native == true
         shell: bash
         run: |
@@ -351,11 +394,12 @@ jobs:
 
           make ${MAKEJOBS}
 
-      # ================================================================
-      # LINUX - CROSS BUILD
-      # ================================================================
 
-      - name: Build (Linux, cross)
+      # ======================================================================
+      # BUILD MINER - LINUX CROSS
+      # ======================================================================
+
+      - name: Build Sugarmaker - Linux cross
         if: matrix.platform == 'linux' && matrix.native == false
         shell: bash
         run: |
@@ -364,11 +408,6 @@ jobs:
           ./autogen.sh || true
 
           HOST="${{ matrix.cross_host }}"
-
-          echo "============================================================"
-          echo "Cross compiling Sugarmaker"
-          echo "Target: ${HOST}"
-          echo "============================================================"
 
           export CC="${HOST}-gcc"
           export CXX="${HOST}-g++"
@@ -421,45 +460,25 @@ jobs:
 
           esac
 
-          echo "CC=${CC}"
-          echo "CXX=${CXX}"
-          echo "CFLAGS=${CFLAGS}"
-          echo "CURL_PREFIX=${CURL_PREFIX}"
-
-          test -n "${CURL_PREFIX}"
-          test -f "${CURL_PREFIX}/lib/libcurl.a"
-
           ./configure \
             --host="${HOST}" \
             --with-curl="${CURL_PREFIX}" \
             CFLAGS="${CFLAGS}" \
             CXXFLAGS="${CXXFLAGS}" \
-            LDFLAGS="-static" \
-          || {
-            echo "============================================================"
-            echo "Sugarmaker configure failed"
-            echo "============================================================"
-
-            if [ -f config.log ]; then
-              tail -250 config.log
-            fi
-
-            exit 1
-          }
+            LDFLAGS="-static"
 
           make ${MAKEJOBS}
 
-      # ================================================================
-      # MACOS - DEPENDENCIES
-      # ================================================================
+
+      # ======================================================================
+      # MACOS DEPENDENCIES
+      # ======================================================================
 
       - name: Install macOS dependencies
         if: matrix.platform == 'macos'
         shell: bash
         run: |
           set -e
-
-          brew update
 
           brew install \
             automake \
@@ -469,13 +488,14 @@ jobs:
             curl \
             jansson \
             openssl \
-            gmp
+            gmp || true
 
-      # ================================================================
-      # MACOS - BUILD
-      # ================================================================
 
-      - name: Build (macOS)
+      # ======================================================================
+      # BUILD MINER - MACOS
+      # ======================================================================
+
+      - name: Build Sugarmaker - macOS
         if: matrix.platform == 'macos'
         shell: bash
         run: |
@@ -491,8 +511,7 @@ jobs:
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             export CFLAGS="-arch x86_64"
             export CXXFLAGS="-arch x86_64"
-
-          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+          else
             export CFLAGS="-arch arm64"
             export CXXFLAGS="-arch arm64"
           fi
@@ -503,11 +522,12 @@ jobs:
 
           make ${MAKEJOBS}
 
-      # ================================================================
-      # WINDOWS i686 - CROSS TOOLCHAIN
-      # ================================================================
 
-      - name: Install MinGW-w64 i686 cross toolchain
+      # ======================================================================
+      # WINDOWS i686 CROSS TOOLCHAIN
+      # ======================================================================
+
+      - name: Install Windows i686 toolchain
         if: matrix.platform == 'win32-cross'
         shell: bash
         run: |
@@ -530,28 +550,12 @@ jobs:
             wget \
             file
 
-          echo "============================================================"
-          echo "MinGW i686 compiler"
-          echo "============================================================"
 
-          i686-w64-mingw32-gcc-posix --version
-          i686-w64-mingw32-g++-posix --version
+      # ======================================================================
+      # WINDOWS i686 DEPENDENCIES
+      # ======================================================================
 
-          printf 'int main(void) { return 0; }\n' > /tmp/mingw-test.c
-
-          i686-w64-mingw32-gcc-posix \
-            /tmp/mingw-test.c \
-            -o /tmp/mingw-test.exe
-
-          file /tmp/mingw-test.exe
-
-          echo "MinGW i686 compiler test passed."
-
-      # ================================================================
-      # WINDOWS i686 - BUILD DEPENDENCIES
-      # ================================================================
-
-      - name: Build depends/deps-win32
+      - name: Build Windows i686 dependencies
         if: matrix.platform == 'win32-cross'
         shell: bash
         run: |
@@ -560,39 +564,22 @@ jobs:
           cd depends/deps-win32
 
           chmod +x build_win_x86_deps.sh
-
           ./build_win_x86_deps.sh
 
           cd ../..
 
-          CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
+          echo "CURL_PREFIX=${PWD}/depends/deps-win32/i686-w64-mingw32" >> "$GITHUB_ENV"
 
-          echo "CURL_PREFIX=${CURL_PREFIX}" >> "$GITHUB_ENV"
 
-          echo "============================================================"
-          echo "Checking Windows i686 dependencies"
-          echo "============================================================"
+      # ======================================================================
+      # BUILD WINDOWS i686
+      # ======================================================================
 
-          test -f "${CURL_PREFIX}/lib/libcurl.a"
-
-          echo "Found:"
-          echo "  ${CURL_PREFIX}/lib/libcurl.a"
-
-      # ================================================================
-      # WINDOWS i686 - BUILD 
-      # ================================================================
-      - name: Build (Windows i686, cross)
+      - name: Build Sugarmaker - Windows i686
         if: matrix.platform == 'win32-cross'
         shell: bash
         run: |
           set -e
-
-          echo "============================================================"
-          echo "Preparing Windows i686 build"
-          echo "============================================================"
-
-          rm -f config.status
-          rm -f config.cache
 
           export HOST="i686-w64-mingw32"
 
@@ -604,211 +591,17 @@ jobs:
 
           CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
 
-          # ------------------------------------------------------------
-          # Compiler flags
-          # ------------------------------------------------------------
-
           export CFLAGS="-Wall -O2 -fomit-frame-pointer -std=c99 -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
-
           export CXXFLAGS="-Wall -O2 -fomit-frame-pointer -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
-
           export CPPFLAGS="-I${CURL_PREFIX}/include"
-
           export LDFLAGS="-static -L${CURL_PREFIX}/lib"
 
-          echo "============================================================"
-          echo "Compiler configuration"
-          echo "============================================================"
-
-          echo "HOST=${HOST}"
-          echo "CC=${CC}"
-          echo "CXX=${CXX}"
-          echo "AR=${AR}"
-          echo "RANLIB=${RANLIB}"
-          echo "STRIP=${STRIP}"
-          echo "CURL_PREFIX=${CURL_PREFIX}"
-          echo "CPPFLAGS=${CPPFLAGS}"
-          echo "CFLAGS=${CFLAGS}"
-          echo "CXXFLAGS=${CXXFLAGS}"
-          echo "LDFLAGS=${LDFLAGS}"
-
-          "${CC}" --version
-
-          # ------------------------------------------------------------
-          # Locate winpthreads
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Locating MinGW winpthreads"
-          echo "============================================================"
-
-          WINPTHREADS_LIB=""
-
-          for candidate in \
-            "/usr/i686-w64-mingw32/lib/libwinpthread.a" \
-            "/usr/lib/gcc/i686-w64-mingw32/10-posix/libwinpthread.a" \
-            "/usr/lib/gcc/i686-w64-mingw32/*-posix/libwinpthread.a" \
-            "/usr/i686-w64-mingw32/lib/libwinpthread-1.dll.a"
-          do
-            for lib in $candidate; do
-              if [ -f "$lib" ]; then
-                WINPTHREADS_LIB="$lib"
-                break 2
-              fi
-            done
-          done
-
-          if [ -z "${WINPTHREADS_LIB}" ]; then
-            echo "ERROR: Could not locate MinGW winpthreads library."
-
-            echo "Searching system:"
-            find /usr \
-              -type f \
-              \( -name "libwinpthread.a" -o -name "libwinpthread-1.dll.a" \) \
-              2>/dev/null \
-              | head -100 || true
-
-            exit 1
-          fi
-
-          WINPTHREADS_DIR="$(dirname "${WINPTHREADS_LIB}")"
-
-          echo "Found winpthreads:"
-          echo "  ${WINPTHREADS_LIB}"
-          echo "Directory:"
-          echo "  ${WINPTHREADS_DIR}"
-
-          export LDFLAGS="${LDFLAGS} -L${WINPTHREADS_DIR}"
-
-          echo "Updated LDFLAGS:"
-          echo "  ${LDFLAGS}"
-
-          # ------------------------------------------------------------
-          # Check libcurl
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Checking libcurl"
-          echo "============================================================"
-
-          test -d "${CURL_PREFIX}"
-          test -d "${CURL_PREFIX}/include"
-          test -d "${CURL_PREFIX}/lib"
-          test -f "${CURL_PREFIX}/lib/libcurl.a"
-          test -f "${CURL_PREFIX}/include/curl/curl.h"
-
-          echo "Found:"
-          echo "  ${CURL_PREFIX}/lib/libcurl.a"
-          echo "  ${CURL_PREFIX}/include/curl/curl.h"
-
-          # ------------------------------------------------------------
-          # Test pthread/winpthreads
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Testing MinGW winpthreads"
-          echo "============================================================"
-
-          cat > /tmp/mingw-pthread-test.c <<'EOF'
-          #include <pthread.h>
-
-          static void *worker(void *arg)
-          {
-              return arg;
-          }
-
-          int main(void)
-          {
-              pthread_t thread;
-              pthread_mutex_t mutex;
-              pthread_cond_t cond;
-
-              pthread_mutex_init(&mutex, NULL);
-              pthread_cond_init(&cond, NULL);
-
-              pthread_create(&thread, NULL, worker, NULL);
-              pthread_join(thread, NULL);
-
-              pthread_cond_destroy(&cond);
-              pthread_mutex_destroy(&mutex);
-
-              return 0;
-          }
-          EOF
-
-          "${CC}" \
-            ${CFLAGS} \
-            ${CPPFLAGS} \
-            /tmp/mingw-pthread-test.c \
-            ${LDFLAGS} \
-            "${WINPTHREADS_LIB}" \
-            -o /tmp/mingw-pthread-test.exe
-
-          file /tmp/mingw-pthread-test.exe
-
-          echo "MinGW i686 winpthreads test passed."
-
-          # ------------------------------------------------------------
-          # Test libcurl + winpthreads
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Testing libcurl + winpthreads"
-          echo "============================================================"
-
-          cat > /tmp/mingw-curl-test.c <<'EOF'
-          #include <curl/curl.h>
-
-          int main(void)
-          {
-              CURL *curl = curl_easy_init();
-
-              if (curl != NULL)
-                  curl_easy_cleanup(curl);
-
-              return 0;
-          }
-          EOF
-
-          "${CC}" \
-            ${CFLAGS} \
-            ${CPPFLAGS} \
-            /tmp/mingw-curl-test.c \
-            ${LDFLAGS} \
-            -lcurl \
-            -lws2_32 \
-            -lcrypt32 \
-            -lsecur32 \
-            -lwldap32 \
-            -lbcrypt \
-            -liphlpapi \
-            "${WINPTHREADS_LIB}" \
-            -o /tmp/mingw-curl-test.exe
-
-          file /tmp/mingw-curl-test.exe
-
-          echo "Direct libcurl + winpthreads link test passed."
-
-          # ------------------------------------------------------------
-          # Regenerate Autotools
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Regenerating Autotools"
-          echo "============================================================"
+          ./autogen.sh || true
 
           autoreconf -fi \
             -I"${CURL_PREFIX}/share/aclocal"
 
-          # ------------------------------------------------------------
-          # Configure
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Configuring Sugarmaker"
-          echo "============================================================"
-
-          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi ${WINPTHREADS_LIB}"
+          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi -lwinpthread"
 
           ./configure \
             --build=x86_64-pc-linux-gnu \
@@ -818,54 +611,9 @@ jobs:
             CFLAGS="${CFLAGS}" \
             CXXFLAGS="${CXXFLAGS}" \
             LDFLAGS="${LDFLAGS}" \
-            LIBS="${LIBS}" \
-          || {
-            echo "============================================================"
-            echo "WINDOWS i686 CONFIGURE FAILED"
-            echo "============================================================"
-
-            echo "winpthreads:"
-            echo "  ${WINPTHREADS_LIB}"
-
-            echo "libcurl:"
-            ls -lh "${CURL_PREFIX}/lib/libcurl.a"
-
-            if [ -f config.log ]; then
-              echo "============================================================"
-              echo "Relevant linker errors"
-              echo "============================================================"
-
-              grep -n -B10 -A30 \
-                -E "pthread_|winpthread|cannot find -lcurl|cannot find -lpthread|C compiler cannot create executables|checking whether the C compiler works" \
-                config.log || true
-
-              echo "============================================================"
-              echo "Last 300 lines of config.log"
-              echo "============================================================"
-
-              tail -300 config.log
-            fi
-
-            exit 1
-          }
-
-          # ------------------------------------------------------------
-          # Build
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Building Sugarmaker"
-          echo "============================================================"
+            LIBS="${LIBS}"
 
           make ${MAKEJOBS}
-
-          # ------------------------------------------------------------
-          # Strip
-          # ------------------------------------------------------------
-
-          echo "============================================================"
-          echo "Stripping executable"
-          echo "============================================================"
 
           "${STRIP}" \
             -p \
@@ -873,31 +621,10 @@ jobs:
             --strip-unneeded \
             sugarmaker.exe
 
-          echo "============================================================"
-          echo "Windows i686 build complete"
-          echo "============================================================"
 
-          file sugarmaker.exe
-
-      # ================================================================
-      # WINDOWS i686 - ARTIFACT
-      # ================================================================
-
-      - name: Prepare i686-win artifact
-        if: matrix.platform == 'win32-cross'
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p dist
-
-          cp sugarmaker.exe dist/
-
-          file dist/sugarmaker.exe
-
-      # ================================================================
-      # WINDOWS - MSYS2
-      # ================================================================
+      # ======================================================================
+      # WINDOWS MSYS2
+      # ======================================================================
 
       - name: Setup MSYS2
         if: matrix.platform == 'windows'
@@ -912,9 +639,10 @@ jobs:
             libtool
             pkg-config
 
-      # ================================================================
+
+      # ======================================================================
       # WINDOWS x86_64 DEPENDENCIES
-      # ================================================================
+      # ======================================================================
 
       - name: Install Windows x86_64 dependencies
         if: matrix.platform == 'windows' && matrix.arch == 'x86_64'
@@ -929,9 +657,10 @@ jobs:
             mingw-w64-x86_64-openssl \
             mingw-w64-x86_64-gmp
 
-      # ================================================================
+
+      # ======================================================================
       # WINDOWS ARM64 DEPENDENCIES
-      # ================================================================
+      # ======================================================================
 
       - name: Install Windows ARM64 dependencies
         if: matrix.platform == 'windows' && matrix.arch == 'arm64'
@@ -946,11 +675,12 @@ jobs:
             mingw-w64-clang-aarch64-openssl \
             mingw-w64-clang-aarch64-gmp
 
-      # ================================================================
-      # WINDOWS - BUILD
-      # ================================================================
 
-      - name: Build (Windows)
+      # ======================================================================
+      # BUILD WINDOWS
+      # ======================================================================
+
+      - name: Build Sugarmaker - Windows
         if: matrix.platform == 'windows'
         shell: msys2 {0}
         run: |
@@ -963,9 +693,35 @@ jobs:
 
           make ${MAKEJOBS}
 
-      # ================================================================
-      # WINDOWS - DLL BUNDLE
-      # ================================================================
+
+      # ======================================================================
+      # NORMALIZE MINER BINARY
+      # ======================================================================
+
+      - name: Prepare miner binary
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-miner
+
+          if [ "${{ matrix.platform }}" = "windows" ] || [ "${{ matrix.platform }}" = "win32-cross" ]; then
+            cp sugarmaker.exe build-miner/sugarmaker.exe
+          else
+            cp sugarmaker build-miner/sugarmaker
+          fi
+
+          echo "============================================================"
+          echo "Miner built successfully"
+          echo "============================================================"
+
+          file build-miner/* || true
+          ls -lh build-miner/
+
+
+      # ======================================================================
+      # WINDOWS DLL BUNDLE
+      # ======================================================================
 
       - name: Bundle Windows DLLs
         if: matrix.platform == 'windows'
@@ -973,56 +729,250 @@ jobs:
         run: |
           set -e
 
-          mkdir -p dist
+          mkdir -p build-miner
 
-          cp sugarmaker.exe dist/
+          cp sugarmaker.exe build-miner/
 
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
 
             DLL_DIR="/mingw64/bin"
 
-            ldd sugarmaker.exe \
-              | grep "$DLL_DIR" \
-              | awk '{print $3}' \
-              | sort -u \
-              | while read dll; do
-                  [ -f "$dll" ] && cp "$dll" dist/
-                done
-
           elif [ "${{ matrix.arch }}" = "arm64" ]; then
 
             DLL_DIR="/clangarm64/bin"
 
-            ldd sugarmaker.exe \
-              | grep "$DLL_DIR" \
-              | awk '{print $3}' \
-              | sort -u \
-              | while read dll; do
-                  [ -f "$dll" ] && cp "$dll" dist/
-                done
+          else
+
+            exit 0
 
           fi
 
-      # ================================================================
-      # LINUX / MACOS ARTIFACT
-      # ================================================================
+          ldd sugarmaker.exe \
+            | grep "$DLL_DIR" \
+            | awk '{print $3}' \
+            | sort -u \
+            | while read dll; do
+                [ -f "$dll" ] && cp "$dll" build-miner/
+              done
 
-      - name: Prepare Linux/macOS artifact
-        if: matrix.platform != 'windows' && matrix.platform != 'win32-cross'
+          echo "Bundled Windows runtime libraries:"
+          ls -lh build-miner/
+
+
+      # ======================================================================
+      # INSTALL LINUX GUI DEPENDENCIES
+      # ======================================================================
+
+      - name: Install GUI dependencies - Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+
+      # ======================================================================
+      # INSTALL GUI DEPENDENCIES - WINDOWS
+      # ======================================================================
+
+      - name: Prepare Windows GUI environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "Preparing Windows GUI build environment"
+
+
+      # ======================================================================
+      # PUT MINER INTO TAURI RESOURCES
+      # ======================================================================
+
+      - name: Prepare GUI miner resource
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p gui/agent/src-tauri/binaries
+
+          if [ "${{ matrix.platform }}" = "windows" ] || [ "${{ matrix.platform }}" = "win32-cross" ]; then
+
+            cp build-miner/sugarmaker.exe \
+              gui/agent/src-tauri/binaries/sugarmaker.exe
+
+          else
+
+            cp build-miner/sugarmaker \
+              gui/agent/src-tauri/binaries/sugarmaker
+
+          fi
+
+          echo "============================================================"
+          echo "GUI miner resource prepared"
+          echo "============================================================"
+
+          ls -lh gui/agent/src-tauri/binaries/
+
+
+      # ======================================================================
+      # INSTALL AGENT DEPENDENCIES
+      # ======================================================================
+
+      - name: Install Agent dependencies
+        working-directory: gui/agent
+        shell: bash
+        run: |
+          set -e
+          npm ci
+
+
+      # ======================================================================
+      # INSTALL DASHBOARD DEPENDENCIES
+      # ======================================================================
+
+      - name: Install Dashboard dependencies
+        working-directory: gui/dashboard
+        shell: bash
+        run: |
+          set -e
+          npm ci
+
+
+      # ======================================================================
+      # BUILD AGENT GUI
+      # ======================================================================
+
+      - name: Build Agent GUI
+        working-directory: gui/agent
+        shell: bash
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "Building Sugarmaker Agent GUI"
+          echo "Target: ${{ matrix.name }}"
+          echo "Rust:   ${{ matrix.rust_target }}"
+          echo "============================================================"
+
+          npm run build
+
+          npx tauri build \
+            --target "${{ matrix.rust_target }}"
+
+
+      # ======================================================================
+      # BUILD DASHBOARD GUI
+      # ======================================================================
+
+      - name: Build Dashboard GUI
+        working-directory: gui/dashboard
+        shell: bash
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "Building Sugarmaker Dashboard GUI"
+          echo "Target: ${{ matrix.name }}"
+          echo "Rust:   ${{ matrix.rust_target }}"
+          echo "============================================================"
+
+          npm run build
+
+          npx tauri build \
+            --target "${{ matrix.rust_target }}"
+
+
+      # ======================================================================
+      # COLLECT EVERYTHING
+      # ======================================================================
+
+      - name: Prepare final architecture bundle
         shell: bash
         run: |
           set -e
 
           mkdir -p dist
 
-          cp sugarmaker dist/
+          # --------------------------------------------------------------
+          # Miner
+          # --------------------------------------------------------------
 
-      # ================================================================
-      # UPLOAD ARTIFACTS
-      # ================================================================
+          mkdir -p dist/miner
 
-      - name: Upload artifacts
+          cp -r build-miner/* dist/miner/
+
+
+          # --------------------------------------------------------------
+          # Agent GUI
+          # --------------------------------------------------------------
+
+          if [ -d "gui/agent/src-tauri/target/${{ matrix.rust_target }}/release/bundle" ]; then
+            mkdir -p dist/agent
+            cp -r \
+              "gui/agent/src-tauri/target/${{ matrix.rust_target }}/release/bundle/"* \
+              dist/agent/ || true
+          fi
+
+
+          # --------------------------------------------------------------
+          # Dashboard GUI
+          # --------------------------------------------------------------
+
+          if [ -d "gui/dashboard/src-tauri/target/${{ matrix.rust_target }}/release/bundle" ]; then
+            mkdir -p dist/dashboard
+            cp -r \
+              "gui/dashboard/src-tauri/target/${{ matrix.rust_target }}/release/bundle/"* \
+              dist/dashboard/ || true
+          fi
+
+
+          # --------------------------------------------------------------
+          # Build information
+          # --------------------------------------------------------------
+
+          cat > dist/BUILD-INFO.txt <<EOF
+          Sugarmaker Build
+          ============================
+
+          Target:
+            ${{ matrix.name }}
+
+          Platform:
+            ${{ matrix.platform }}
+
+          Architecture:
+            ${{ matrix.arch }}
+
+          Rust Target:
+            ${{ matrix.rust_target }}
+
+          Components:
+            - Sugarmaker CPU Miner
+            - Sugarmaker Agent GUI
+            - Sugarmaker Dashboard GUI
+          EOF
+
+
+          echo "============================================================"
+          echo "FINAL BUILD"
+          echo "============================================================"
+
+          find dist -maxdepth 3 -type f -print
+          du -sh dist || true
+
+
+      # ======================================================================
+      # UPLOAD FINAL ARCHITECTURE
+      # ======================================================================
+
+      - name: Upload architecture bundle
         uses: actions/upload-artifact@v4
         with:
           name: sugarmaker-${{ matrix.name }}
-          path: dist/*
+          path: dist/**
+          if-no-files-found: error
