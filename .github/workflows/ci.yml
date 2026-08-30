@@ -598,6 +598,21 @@ jobs:
 
       # ================================================================
       # WINDOWS i686 - BUILD
+      #
+      # FIX:
+      #
+      # The libcurl archive exists, but configure was invoking:
+      #
+      #   -lcurl
+      #
+      # without adding the dependency prefix to the linker search path.
+      #
+      # Explicitly provide:
+      #
+      #   -I${CURL_PREFIX}/include
+      #   -L${CURL_PREFIX}/lib
+      #
+      # This fixes "cannot find -lcurl" without touching any Linux build.
       # ================================================================
 
       - name: Build (Windows i686, cross)
@@ -610,8 +625,6 @@ jobs:
           echo "Preparing Windows i686 build"
           echo "============================================================"
 
-          make distclean || true
-
           rm -f config.status
           rm -f config.cache
 
@@ -623,26 +636,43 @@ jobs:
           export RANLIB="i686-w64-mingw32-ranlib"
           export STRIP="i686-w64-mingw32-strip"
 
+          CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
+
+          # ------------------------------------------------------------
+          # Compiler flags
+          # ------------------------------------------------------------
+
           export CFLAGS="-Wall -O2 -fomit-frame-pointer -std=c99 -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
 
           export CXXFLAGS="-Wall -O2 -fomit-frame-pointer -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
 
-          export LDFLAGS="-static"
+          # IMPORTANT:
+          # Explicitly add the Windows i686 curl include and library
+          # directories. Without -L${CURL_PREFIX}/lib the linker only
+          # searches the normal MinGW directories and cannot find
+          # libcurl.a.
+          export CPPFLAGS="-I${CURL_PREFIX}/include"
+
+          export LDFLAGS="-static -L${CURL_PREFIX}/lib"
 
           export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi"
-
-          CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
 
           echo "============================================================"
           echo "Compiler configuration"
           echo "============================================================"
 
+          echo "HOST=${HOST}"
           echo "CC=${CC}"
           echo "CXX=${CXX}"
           echo "AR=${AR}"
           echo "RANLIB=${RANLIB}"
           echo "STRIP=${STRIP}"
           echo "CURL_PREFIX=${CURL_PREFIX}"
+          echo "CPPFLAGS=${CPPFLAGS}"
+          echo "CFLAGS=${CFLAGS}"
+          echo "CXXFLAGS=${CXXFLAGS}"
+          echo "LDFLAGS=${LDFLAGS}"
+          echo "LIBS=${LIBS}"
 
           "${CC}" --version
 
@@ -651,10 +681,44 @@ jobs:
           echo "============================================================"
 
           test -d "${CURL_PREFIX}"
+          test -d "${CURL_PREFIX}/include"
+          test -d "${CURL_PREFIX}/lib"
           test -f "${CURL_PREFIX}/lib/libcurl.a"
+          test -f "${CURL_PREFIX}/include/curl/curl.h"
 
           echo "Found:"
           echo "  ${CURL_PREFIX}/lib/libcurl.a"
+          echo "  ${CURL_PREFIX}/include/curl/curl.h"
+
+          echo "============================================================"
+          echo "Testing direct libcurl link"
+          echo "============================================================"
+
+          cat > /tmp/mingw-curl-test.c <<'EOF'
+          #include <curl/curl.h>
+
+          int main(void)
+          {
+              CURL *curl = curl_easy_init();
+
+              if (curl != NULL)
+                  curl_easy_cleanup(curl);
+
+              return 0;
+          }
+          EOF
+
+          "${CC}" \
+            ${CFLAGS} \
+            ${CPPFLAGS} \
+            /tmp/mingw-curl-test.c \
+            ${LDFLAGS} \
+            ${LIBS} \
+            -o /tmp/mingw-curl-test.exe
+
+          file /tmp/mingw-curl-test.exe
+
+          echo "Direct libcurl link test passed."
 
           echo "============================================================"
           echo "Regenerating Autotools"
@@ -662,8 +726,6 @@ jobs:
 
           autoreconf -fi \
             -I"${CURL_PREFIX}/share/aclocal"
-
-          ./autogen.sh || true
 
           echo "============================================================"
           echo "Configuring Sugarmaker"
@@ -673,6 +735,7 @@ jobs:
             --build=x86_64-pc-linux-gnu \
             --host="${HOST}" \
             --with-curl="${CURL_PREFIX}" \
+            CPPFLAGS="${CPPFLAGS}" \
             CFLAGS="${CFLAGS}" \
             CXXFLAGS="${CXXFLAGS}" \
             LDFLAGS="${LDFLAGS}" \
@@ -682,7 +745,22 @@ jobs:
             echo "WINDOWS i686 CONFIGURE FAILED"
             echo "============================================================"
 
+            echo "Checking libcurl again:"
+            ls -lh "${CURL_PREFIX}/lib/libcurl.a"
+
+            echo "============================================================"
+            echo "Relevant linker errors"
+            echo "============================================================"
+
             if [ -f config.log ]; then
+              grep -n -B10 -A30 \
+                -E "cannot find -lcurl|C compiler cannot create executables|checking whether the C compiler works" \
+                config.log || true
+
+              echo "============================================================"
+              echo "Last 300 lines of config.log"
+              echo "============================================================"
+
               tail -300 config.log
             fi
 
@@ -699,7 +777,7 @@ jobs:
           echo "Stripping executable"
           echo "============================================================"
 
-          i686-w64-mingw32-strip \
+          "${STRIP}" \
             -p \
             --strip-debug \
             --strip-unneeded \
