@@ -205,12 +205,6 @@ jobs:
 
       # ================================================================
       # LINUX - BUILD STATIC CURL FOR CROSS TARGETS
-      #
-      # Important:
-      #
-      # We deliberately disable zlib and other optional dependencies.
-      # This prevents curl's configure tests from attempting to link
-      # against host-side -lz/-lidn2/etc. while cross compiling.
       # ================================================================
 
       - name: Build static libcurl for cross target
@@ -382,10 +376,6 @@ jobs:
           export RANLIB="${HOST}-ranlib"
           export STRIP="${HOST}-strip"
 
-          # ------------------------------------------------------------
-          # i686 Linux
-          # ------------------------------------------------------------
-
           if [ "${{ matrix.arch }}" = "i686" ]; then
 
             export CC="gcc"
@@ -411,10 +401,6 @@ jobs:
 
             exit 0
           fi
-
-          # ------------------------------------------------------------
-          # Target-specific compiler flags
-          # ------------------------------------------------------------
 
           case "${{ matrix.arch }}" in
 
@@ -551,10 +537,6 @@ jobs:
           i686-w64-mingw32-gcc-posix --version
           i686-w64-mingw32-g++-posix --version
 
-          echo "============================================================"
-          echo "Testing MinGW i686 compiler"
-          echo "============================================================"
-
           printf 'int main(void) { return 0; }\n' > /tmp/mingw-test.c
 
           i686-w64-mingw32-gcc-posix \
@@ -599,20 +581,21 @@ jobs:
       # ================================================================
       # WINDOWS i686 - BUILD
       #
-      # FIX:
+      # i686 ONLY FIX:
       #
-      # The libcurl archive exists, but configure was invoking:
+      # The dependency directory contains libpthread.a, and the final
+      # static link requires pthread to be explicitly available after
+      # the static libraries which reference pthread symbols.
       #
-      #   -lcurl
+      # We therefore:
       #
-      # without adding the dependency prefix to the linker search path.
+      #   1. Explicitly verify libpthread.a exists.
+      #   2. Put the dependency directory in LDFLAGS.
+      #   3. Keep -lpthread in LIBS.
+      #   4. Keep -lpthread AFTER -lcurl so the static linker can resolve
+      #      pthread_* references pulled from libcurl/other archives.
       #
-      # Explicitly provide:
-      #
-      #   -I${CURL_PREFIX}/include
-      #   -L${CURL_PREFIX}/lib
-      #
-      # This fixes "cannot find -lcurl" without touching any Linux build.
+      # NO OTHER TARGET IS CHANGED.
       # ================================================================
 
       - name: Build (Windows i686, cross)
@@ -646,16 +629,19 @@ jobs:
 
           export CXXFLAGS="-Wall -O2 -fomit-frame-pointer -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
 
-          # IMPORTANT:
-          # Explicitly add the Windows i686 curl include and library
-          # directories. Without -L${CURL_PREFIX}/lib the linker only
-          # searches the normal MinGW directories and cannot find
-          # libcurl.a.
           export CPPFLAGS="-I${CURL_PREFIX}/include"
 
+          # Explicitly expose the dependency directory to the linker.
           export LDFLAGS="-static -L${CURL_PREFIX}/lib"
 
-          export LIBS="-lpthread -lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi"
+          # IMPORTANT:
+          #
+          # Keep pthread AFTER curl.
+          #
+          # With static archives, the linker processes libraries left to
+          # right. libcurl can introduce pthread_* references, so pthread
+          # must appear after libcurl.
+          export LIBS="-lcurl -lpthread -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi"
 
           echo "============================================================"
           echo "Compiler configuration"
@@ -677,21 +663,30 @@ jobs:
           "${CC}" --version
 
           echo "============================================================"
-          echo "Checking libcurl"
+          echo "Checking i686 dependency archives"
           echo "============================================================"
 
           test -d "${CURL_PREFIX}"
           test -d "${CURL_PREFIX}/include"
           test -d "${CURL_PREFIX}/lib"
+
           test -f "${CURL_PREFIX}/lib/libcurl.a"
+          test -f "${CURL_PREFIX}/lib/libpthread.a"
           test -f "${CURL_PREFIX}/include/curl/curl.h"
 
           echo "Found:"
           echo "  ${CURL_PREFIX}/lib/libcurl.a"
+          echo "  ${CURL_PREFIX}/lib/libpthread.a"
           echo "  ${CURL_PREFIX}/include/curl/curl.h"
 
           echo "============================================================"
-          echo "Testing direct libcurl link"
+          echo "Inspecting pthread archive"
+          echo "============================================================"
+
+          "${AR}" t "${CURL_PREFIX}/lib/libpthread.a" | head -30
+
+          echo "============================================================"
+          echo "Testing direct libcurl + pthread link"
           echo "============================================================"
 
           cat > /tmp/mingw-curl-test.c <<'EOF'
@@ -718,7 +713,7 @@ jobs:
 
           file /tmp/mingw-curl-test.exe
 
-          echo "Direct libcurl link test passed."
+          echo "Direct libcurl + pthread link test passed."
 
           echo "============================================================"
           echo "Regenerating Autotools"
@@ -745,8 +740,10 @@ jobs:
             echo "WINDOWS i686 CONFIGURE FAILED"
             echo "============================================================"
 
-            echo "Checking libcurl again:"
-            ls -lh "${CURL_PREFIX}/lib/libcurl.a"
+            echo "Checking dependency archives again:"
+            ls -lh \
+              "${CURL_PREFIX}/lib/libcurl.a" \
+              "${CURL_PREFIX}/lib/libpthread.a"
 
             echo "============================================================"
             echo "Relevant linker errors"
@@ -754,7 +751,7 @@ jobs:
 
             if [ -f config.log ]; then
               grep -n -B10 -A30 \
-                -E "cannot find -lcurl|C compiler cannot create executables|checking whether the C compiler works" \
+                -E "cannot find -lcurl|cannot find -lpthread|undefined reference to.*pthread|C compiler cannot create executables|checking whether the C compiler works" \
                 config.log || true
 
               echo "============================================================"
