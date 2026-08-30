@@ -655,7 +655,7 @@ jobs:
 
           export LDFLAGS="-static -L${CURL_PREFIX}/lib"
 
-          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi"
+          export LIBS="-lpthread -lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi"
 
           echo "============================================================"
           echo "Compiler configuration"
