@@ -823,24 +823,23 @@ jobs:
       # INSTALL AGENT DEPENDENCIES
       # ======================================================================
 
-      - name: Install Agent dependencies
+      - name: Install agent frontend dependencies
         working-directory: gui/agent
         shell: bash
         run: |
           set -e
-          npm ci
-
+          npm install
 
       # ======================================================================
       # INSTALL DASHBOARD DEPENDENCIES
       # ======================================================================
 
-      - name: Install Dashboard dependencies
+      - name: Install dashboard frontend dependencies
         working-directory: gui/dashboard
         shell: bash
         run: |
           set -e
-          npm ci
+          npm install
 
 
       # ======================================================================
