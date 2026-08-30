@@ -614,18 +614,7 @@ jobs:
 
           export CPPFLAGS="-I${CURL_PREFIX}/include"
 
-          # Keep the dependency library directory available to the linker.
           export LDFLAGS="-static -L${CURL_PREFIX}/lib"
-
-          # IMPORTANT:
-          #
-          # pthread is deliberately LAST.
-          #
-          # With static linking, the MinGW linker resolves libraries from
-          # left to right. Sugarmaker/util.o contains pthread references,
-          # so pthread must appear after the objects/libraries that require it.
-          #
-          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi -lpthread"
 
           echo "============================================================"
           echo "Compiler configuration"
@@ -642,9 +631,61 @@ jobs:
           echo "CFLAGS=${CFLAGS}"
           echo "CXXFLAGS=${CXXFLAGS}"
           echo "LDFLAGS=${LDFLAGS}"
-          echo "LIBS=${LIBS}"
 
           "${CC}" --version
+
+          # ------------------------------------------------------------
+          # Locate winpthreads
+          # ------------------------------------------------------------
+
+          echo "============================================================"
+          echo "Locating MinGW winpthreads"
+          echo "============================================================"
+
+          WINPTHREADS_LIB=""
+
+          for candidate in \
+            "/usr/i686-w64-mingw32/lib/libwinpthread.a" \
+            "/usr/lib/gcc/i686-w64-mingw32/10-posix/libwinpthread.a" \
+            "/usr/lib/gcc/i686-w64-mingw32/*-posix/libwinpthread.a" \
+            "/usr/i686-w64-mingw32/lib/libwinpthread-1.dll.a"
+          do
+            for lib in $candidate; do
+              if [ -f "$lib" ]; then
+                WINPTHREADS_LIB="$lib"
+                break 2
+              fi
+            done
+          done
+
+          if [ -z "${WINPTHREADS_LIB}" ]; then
+            echo "ERROR: Could not locate MinGW winpthreads library."
+
+            echo "Searching system:"
+            find /usr \
+              -type f \
+              \( -name "libwinpthread.a" -o -name "libwinpthread-1.dll.a" \) \
+              2>/dev/null \
+              | head -100 || true
+
+            exit 1
+          fi
+
+          WINPTHREADS_DIR="$(dirname "${WINPTHREADS_LIB}")"
+
+          echo "Found winpthreads:"
+          echo "  ${WINPTHREADS_LIB}"
+          echo "Directory:"
+          echo "  ${WINPTHREADS_DIR}"
+
+          export LDFLAGS="${LDFLAGS} -L${WINPTHREADS_DIR}"
+
+          echo "Updated LDFLAGS:"
+          echo "  ${LDFLAGS}"
+
+          # ------------------------------------------------------------
+          # Check libcurl
+          # ------------------------------------------------------------
 
           echo "============================================================"
           echo "Checking libcurl"
@@ -660,8 +701,12 @@ jobs:
           echo "  ${CURL_PREFIX}/lib/libcurl.a"
           echo "  ${CURL_PREFIX}/include/curl/curl.h"
 
+          # ------------------------------------------------------------
+          # Test pthread/winpthreads
+          # ------------------------------------------------------------
+
           echo "============================================================"
-          echo "Checking pthread support"
+          echo "Testing MinGW winpthreads"
           echo "============================================================"
 
           cat > /tmp/mingw-pthread-test.c <<'EOF'
@@ -696,15 +741,19 @@ jobs:
             ${CPPFLAGS} \
             /tmp/mingw-pthread-test.c \
             ${LDFLAGS} \
-            -lpthread \
+            "${WINPTHREADS_LIB}" \
             -o /tmp/mingw-pthread-test.exe
 
           file /tmp/mingw-pthread-test.exe
 
-          echo "MinGW i686 pthread link test passed."
+          echo "MinGW i686 winpthreads test passed."
+
+          # ------------------------------------------------------------
+          # Test libcurl + winpthreads
+          # ------------------------------------------------------------
 
           echo "============================================================"
-          echo "Testing direct libcurl link"
+          echo "Testing libcurl + winpthreads"
           echo "============================================================"
 
           cat > /tmp/mingw-curl-test.c <<'EOF'
@@ -733,12 +782,16 @@ jobs:
             -lwldap32 \
             -lbcrypt \
             -liphlpapi \
-            -lpthread \
+            "${WINPTHREADS_LIB}" \
             -o /tmp/mingw-curl-test.exe
 
           file /tmp/mingw-curl-test.exe
 
-          echo "Direct libcurl link test passed."
+          echo "Direct libcurl + winpthreads link test passed."
+
+          # ------------------------------------------------------------
+          # Regenerate Autotools
+          # ------------------------------------------------------------
 
           echo "============================================================"
           echo "Regenerating Autotools"
@@ -747,9 +800,15 @@ jobs:
           autoreconf -fi \
             -I"${CURL_PREFIX}/share/aclocal"
 
+          # ------------------------------------------------------------
+          # Configure
+          # ------------------------------------------------------------
+
           echo "============================================================"
           echo "Configuring Sugarmaker"
           echo "============================================================"
+
+          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi ${WINPTHREADS_LIB}"
 
           ./configure \
             --build=x86_64-pc-linux-gnu \
@@ -765,16 +824,19 @@ jobs:
             echo "WINDOWS i686 CONFIGURE FAILED"
             echo "============================================================"
 
-            echo "Checking libcurl again:"
+            echo "winpthreads:"
+            echo "  ${WINPTHREADS_LIB}"
+
+            echo "libcurl:"
             ls -lh "${CURL_PREFIX}/lib/libcurl.a"
 
-            echo "============================================================"
-            echo "Relevant linker errors"
-            echo "============================================================"
-
             if [ -f config.log ]; then
+              echo "============================================================"
+              echo "Relevant linker errors"
+              echo "============================================================"
+
               grep -n -B10 -A30 \
-                -E "cannot find -lcurl|cannot find -lpthread|C compiler cannot create executables|checking whether the C compiler works" \
+                -E "pthread_|winpthread|cannot find -lcurl|cannot find -lpthread|C compiler cannot create executables|checking whether the C compiler works" \
                 config.log || true
 
               echo "============================================================"
@@ -787,11 +849,19 @@ jobs:
             exit 1
           }
 
+          # ------------------------------------------------------------
+          # Build
+          # ------------------------------------------------------------
+
           echo "============================================================"
           echo "Building Sugarmaker"
           echo "============================================================"
 
           make ${MAKEJOBS}
+
+          # ------------------------------------------------------------
+          # Strip
+          # ------------------------------------------------------------
 
           echo "============================================================"
           echo "Stripping executable"
