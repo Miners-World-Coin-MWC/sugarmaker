@@ -30,8 +30,6 @@ struct RunningWorker {
     stop_flag: Arc<Mutex<bool>>,
 }
 
-/// Owns every worker on this rig:
-/// configuration, live statistics, and the actual OS process.
 pub struct WorkerManager {
     configs: RwLock<HashMap<String, WorkerConfig>>,
     stats: RwLock<HashMap<String, Arc<Mutex<WorkerStats>>>>,
@@ -102,10 +100,10 @@ impl WorkerManager {
 
         let mut out = HashMap::new();
 
-        for (id, s) in stats.iter() {
+        for (id, worker_stats) in stats.iter() {
             out.insert(
                 id.clone(),
-                s.lock().await.clone(),
+                worker_stats.lock().await.clone(),
             );
         }
 
@@ -116,10 +114,6 @@ impl WorkerManager {
         self: &Arc<Self>,
         id: &str,
     ) -> anyhow::Result<()> {
-        /*
-         * Do not start a second copy if this worker
-         * is already running.
-         */
         if self.running.lock().await.contains_key(id) {
             return Ok(());
         }
@@ -152,12 +146,6 @@ impl WorkerManager {
         .await
     }
 
-    /*
-     * Spawn one actual miner process.
-     *
-     * This function only creates the process and its
-     * supervisor task. It does NOT recursively call itself.
-     */
     async fn spawn_worker(
         self: &Arc<Self>,
         id: String,
@@ -174,18 +162,21 @@ impl WorkerManager {
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture stdout"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("failed to capture stdout")
+            })?;
 
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture stderr"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("failed to capture stderr")
+            })?;
 
-        /*
-         * Mark worker as running.
-         */
         {
-            let mut stats = stats_arc.lock().await;
+            let mut stats =
+                stats_arc.lock().await;
+
             stats.running = true;
         }
 
@@ -204,204 +195,184 @@ impl WorkerManager {
         let worker_id =
             id.clone();
 
-        /*
-         * The supervisor task ONLY watches the miner output.
-         *
-         * It never calls spawn_worker() and therefore never
-         * creates the recursive Future + Send problem.
-         */
-        let supervisor_task = tokio::spawn(async move {
-            let mut stdout_reader =
-                BufReader::new(stdout).lines();
+        let supervisor_task =
+            tokio::spawn(async move {
+                let mut stdout_reader =
+                    BufReader::new(stdout).lines();
 
-            let mut stderr_reader =
-                BufReader::new(stderr).lines();
+                let mut stderr_reader =
+                    BufReader::new(stderr).lines();
 
-            loop {
-                tokio::select! {
-                    line = stdout_reader.next_line() => {
-                        match line {
-                            Ok(Some(line)) => {
-                                apply_line(
-                                    &stats_for_task,
-                                    &line,
-                                )
-                                .await;
-                            }
+                loop {
+                    tokio::select! {
+                        line = stdout_reader.next_line() => {
+                            match line {
+                                Ok(Some(line)) => {
+                                    apply_line(
+                                        &stats_for_task,
+                                        &line,
+                                    )
+                                    .await;
+                                }
 
-                            Ok(None) => {
-                                break;
-                            }
+                                Ok(None) => {
+                                    break;
+                                }
 
-                            Err(err) => {
-                                eprintln!(
-                                    "Worker {} stdout error: {}",
-                                    worker_id,
-                                    err
-                                );
-                                break;
+                                Err(err) => {
+                                    eprintln!(
+                                        "Worker {} stdout error: {}",
+                                        worker_id,
+                                        err
+                                    );
+
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    line = stderr_reader.next_line() => {
-                        match line {
-                            Ok(Some(line)) => {
-                                apply_line(
-                                    &stats_for_task,
-                                    &line,
-                                )
-                                .await;
-                            }
+                        line = stderr_reader.next_line() => {
+                            match line {
+                                Ok(Some(line)) => {
+                                    apply_line(
+                                        &stats_for_task,
+                                        &line,
+                                    )
+                                    .await;
+                                }
 
-                            Ok(None) => {}
+                                Ok(None) => {}
 
-                            Err(err) => {
-                                eprintln!(
-                                    "Worker {} stderr error: {}",
-                                    worker_id,
-                                    err
-                                );
+                                Err(err) => {
+                                    eprintln!(
+                                        "Worker {} stderr error: {}",
+                                        worker_id,
+                                        err
+                                    );
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            /*
-             * Miner output closed.
-             */
-            {
-                let mut stats =
-                    stats_for_task.lock().await;
+                {
+                    let mut stats =
+                        stats_for_task.lock().await;
 
-                stats.running = false;
-            }
+                    stats.running = false;
+                }
 
-            /*
-             * Determine whether this was an intentional
-             * stop or an unexpected miner exit.
-             */
-            let should_restart = {
-                let stopping =
-                    *stop_flag_for_task.lock().await;
+                let should_restart = {
+                    let stopping =
+                        *stop_flag_for_task
+                            .lock()
+                            .await;
 
-                !stopping
-            };
+                    !stopping
+                };
 
-            if !should_restart {
-                /*
-                 * Manual stop.
-                 */
-                return;
-            }
-
-            /*
-             * Miner crashed/exited unexpectedly.
-             */
-            {
-                let mut stats =
-                    stats_for_task.lock().await;
-
-                stats.restarts += 1;
-            }
-
-            /*
-             * Remove the dead process from the running map.
-             */
-            manager
-                .running
-                .lock()
-                .await
-                .remove(&worker_id);
-
-            /*
-             * Delay before restarting.
-             */
-            tokio::time::sleep(
-                std::time::Duration::from_secs(3),
-            )
-            .await;
-
-            /*
-             * Check again after the delay in case the user
-             * stopped the worker while we were waiting.
-             */
-            let stopped_during_delay = {
-                let stopping =
-                    *stop_flag_for_task.lock().await;
-
-                stopping
-            };
-
-            if stopped_during_delay {
-                return;
-            }
-
-            /*
-             * Re-read the configuration. This means changes
-             * made through the GUI are picked up on restart.
-             */
-            let cfg = match manager
-                .configs
-                .read()
-                .await
-                .get(&worker_id)
-                .cloned()
-            {
-                Some(cfg) => cfg,
-
-                None => {
-                    eprintln!(
-                        "Worker {} configuration no longer exists",
-                        worker_id
-                    );
-
+                if !should_restart {
                     return;
                 }
-            };
 
-            /*
-             * Start the replacement worker.
-             *
-             * We intentionally do not await spawn_worker()
-             * from the current supervisor task.
-             *
-             * Instead, this supervisor task finishes and a
-             * completely independent Tokio task performs the
-             * restart.
-             */
-            let manager_for_restart =
-                manager.clone();
+                {
+                    let mut stats =
+                        stats_for_task.lock().await;
 
-            let stats_for_restart =
-                stats_for_task.clone();
+                    stats.restarts += 1;
+                }
 
-            let id_for_restart =
-                worker_id.clone();
+                /*
+                 * Remove the dead worker before waiting
+                 * for its replacement.
+                 */
+                manager
+                    .running
+                    .lock()
+                    .await
+                    .remove(&worker_id);
 
-            tokio::spawn(async move {
+                /*
+                 * Wait before restarting.
+                 */
+                tokio::time::sleep(
+                    std::time::Duration::from_secs(3),
+                )
+                .await;
+
+                /*
+                 * If the old worker was manually stopped
+                 * during the delay, don't restart it.
+                 */
+                if *stop_flag_for_task
+                    .lock()
+                    .await
+                {
+                    return;
+                }
+
+                /*
+                 * Don't create a duplicate if another
+                 * worker was started during the delay.
+                 */
+                if manager
+                    .running
+                    .lock()
+                    .await
+                    .contains_key(&worker_id)
+                {
+                    return;
+                }
+
+                /*
+                 * Load the latest configuration.
+                 */
+                let cfg = match manager
+                    .configs
+                    .read()
+                    .await
+                    .get(&worker_id)
+                    .cloned()
+                {
+                    Some(cfg) => cfg,
+
+                    None => {
+                        eprintln!(
+                            "Worker {} configuration no longer exists",
+                            worker_id
+                        );
+
+                        return;
+                    }
+                };
+
+                /*
+                 * IMPORTANT:
+                 *
+                 * Restart directly.
+                 *
+                 * DO NOT wrap this in tokio::spawn().
+                 *
+                 * This eliminates the Future + Send error
+                 * that was stopping the x86_64 Linux GUI build.
+                 */
                 if let Err(err) =
-                    manager_for_restart
+                    manager
                         .spawn_worker(
-                            id_for_restart.clone(),
+                            worker_id.clone(),
                             cfg,
-                            stats_for_restart,
+                            stats_for_task.clone(),
                         )
                         .await
                 {
                     eprintln!(
                         "Failed to restart worker {}: {}",
-                        id_for_restart,
+                        worker_id,
                         err
                     );
                 }
             });
-        });
 
-        /*
-         * Register the process.
-         */
         self.running.lock().await.insert(
             id,
             RunningWorker {
@@ -415,29 +386,22 @@ impl WorkerManager {
     }
 
     pub async fn stop(&self, id: &str) {
-        if let Some(mut worker) =
+        if let Some(worker) =
             self.running.lock().await.remove(id)
         {
-            /*
-             * Tell the supervisor that this is an
-             * intentional shutdown.
-             */
             *worker.stop_flag.lock().await = true;
 
-            /*
-             * Terminate the miner process.
-             */
-            let _ = worker.child.start_kill();
+            let mut child =
+                worker.child;
 
-            /*
-             * Stop the supervisor task.
-             */
-            worker.supervisor_task.abort();
+            let _ =
+                child.start_kill();
+
+            worker
+                .supervisor_task
+                .abort();
         }
 
-        /*
-         * Update the visible worker state.
-         */
         if let Some(stats) =
             self.stats.read().await.get(id)
         {
@@ -467,7 +431,8 @@ async fn apply_line(
     stats: &Arc<Mutex<WorkerStats>>,
     line: &str,
 ) {
-    let event = parse_line(line);
+    let event =
+        parse_line(line);
 
     let mut stats =
         stats.lock().await;
@@ -505,10 +470,6 @@ async fn apply_line(
             stats.total_shares =
                 total;
 
-            /*
-             * If thread-level hashrate hasn't been seen,
-             * use the aggregate rate from the miner.
-             */
             if stats
                 .per_thread_hps
                 .is_empty()
