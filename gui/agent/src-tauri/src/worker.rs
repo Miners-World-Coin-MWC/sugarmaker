@@ -4,6 +4,8 @@ use crate::parser::{parse_line, LogEvent};
 use serde::{Deserialize, Serialize};
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 
@@ -155,263 +157,280 @@ impl WorkerManager {
     /*
      * Spawn one actual miner process.
      *
-     * This function only creates the process and its
-     * supervisor task. It does NOT recursively call itself.
+     * NOTE ON THE RETURN TYPE: this function is called recursively on the
+     * crash-restart path below (a nested `tokio::spawn` block, still
+     * lexically inside this function's body, calls `spawn_worker` again).
+     * If this were a plain `async fn`, the compiler would need to embed
+     * the future's own type inside itself to describe that call, which is
+     * an infinite/self-referential type it can't resolve -- that's what
+     * produced the "future cannot be sent between threads safely" error,
+     * since it also can't prove a Send bound on a type it can't finish
+     * computing.
+     *
+     * Returning a boxed, pinned trait object instead gives the recursive
+     * call (and every other caller) a concrete, finite type to hold and
+     * `.await` -- the same fix pattern as boxing a recursive struct. This
+     * changes nothing at the call sites; `Pin<Box<dyn Future<...>>>` is
+     * itself a `Future`, so `.await` works exactly as before.
      */
-    async fn spawn_worker(
+    fn spawn_worker(
         self: &Arc<Self>,
         id: String,
         cfg: WorkerConfig,
         stats_arc: Arc<Mutex<WorkerStats>>,
-    ) -> anyhow::Result<()> {
-        let mut child = Command::new(cfg.binary())
-            .args(cfg.to_args())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let mut child = Command::new(cfg.binary())
+                .args(cfg.to_args())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?;
 
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture stdout"))?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("failed to capture stdout"))?;
 
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("failed to capture stderr"))?;
+            let stderr = child
+                .stderr
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("failed to capture stderr"))?;
 
-        /*
-         * Mark worker as running.
-         */
-        {
-            let mut stats = stats_arc.lock().await;
-            stats.running = true;
-        }
+            /*
+             * Mark worker as running.
+             */
+            {
+                let mut stats = stats_arc.lock().await;
+                stats.running = true;
+            }
 
-        let stop_flag =
-            Arc::new(Mutex::new(false));
+            let stop_flag =
+                Arc::new(Mutex::new(false));
 
-        let stop_flag_for_task =
-            stop_flag.clone();
+            let stop_flag_for_task =
+                stop_flag.clone();
 
-        let stats_for_task =
-            stats_arc.clone();
+            let stats_for_task =
+                stats_arc.clone();
 
-        let manager =
-            self.clone();
+            let manager =
+                self.clone();
 
-        let worker_id =
-            id.clone();
+            let worker_id =
+                id.clone();
 
-        /*
-         * The supervisor task ONLY watches the miner output.
-         *
-         * It never calls spawn_worker() and therefore never
-         * creates the recursive Future + Send problem.
-         */
-        let supervisor_task = tokio::spawn(async move {
-            let mut stdout_reader =
-                BufReader::new(stdout).lines();
+            /*
+             * The supervisor task ONLY watches the miner output and,
+             * on an unexpected exit, kicks off a restart via a brand new
+             * top-level tokio::spawn (not by awaiting spawn_worker()
+             * directly from here) -- see the note on the return type
+             * above for why that indirection is what needs boxing.
+             */
+            let supervisor_task = tokio::spawn(async move {
+                let mut stdout_reader =
+                    BufReader::new(stdout).lines();
 
-            let mut stderr_reader =
-                BufReader::new(stderr).lines();
+                let mut stderr_reader =
+                    BufReader::new(stderr).lines();
 
-            loop {
-                tokio::select! {
-                    line = stdout_reader.next_line() => {
-                        match line {
-                            Ok(Some(line)) => {
-                                apply_line(
-                                    &stats_for_task,
-                                    &line,
-                                )
-                                .await;
-                            }
+                loop {
+                    tokio::select! {
+                        line = stdout_reader.next_line() => {
+                            match line {
+                                Ok(Some(line)) => {
+                                    apply_line(
+                                        &stats_for_task,
+                                        &line,
+                                    )
+                                    .await;
+                                }
 
-                            Ok(None) => {
-                                break;
-                            }
+                                Ok(None) => {
+                                    break;
+                                }
 
-                            Err(err) => {
-                                eprintln!(
-                                    "Worker {} stdout error: {}",
-                                    worker_id,
-                                    err
-                                );
-                                break;
+                                Err(err) => {
+                                    eprintln!(
+                                        "Worker {} stdout error: {}",
+                                        worker_id,
+                                        err
+                                    );
+                                    break;
+                                }
                             }
                         }
-                    }
 
-                    line = stderr_reader.next_line() => {
-                        match line {
-                            Ok(Some(line)) => {
-                                apply_line(
-                                    &stats_for_task,
-                                    &line,
-                                )
-                                .await;
-                            }
+                        line = stderr_reader.next_line() => {
+                            match line {
+                                Ok(Some(line)) => {
+                                    apply_line(
+                                        &stats_for_task,
+                                        &line,
+                                    )
+                                    .await;
+                                }
 
-                            Ok(None) => {}
+                                Ok(None) => {}
 
-                            Err(err) => {
-                                eprintln!(
-                                    "Worker {} stderr error: {}",
-                                    worker_id,
-                                    err
-                                );
+                                Err(err) => {
+                                    eprintln!(
+                                        "Worker {} stderr error: {}",
+                                        worker_id,
+                                        err
+                                    );
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            /*
-             * Miner output closed.
-             */
-            {
-                let mut stats =
-                    stats_for_task.lock().await;
-
-                stats.running = false;
-            }
-
-            /*
-             * Determine whether this was an intentional
-             * stop or an unexpected miner exit.
-             */
-            let should_restart = {
-                let stopping =
-                    *stop_flag_for_task.lock().await;
-
-                !stopping
-            };
-
-            if !should_restart {
                 /*
-                 * Manual stop.
+                 * Miner output closed.
                  */
-                return;
-            }
+                {
+                    let mut stats =
+                        stats_for_task.lock().await;
 
-            /*
-             * Miner crashed/exited unexpectedly.
-             */
-            {
-                let mut stats =
-                    stats_for_task.lock().await;
+                    stats.running = false;
+                }
 
-                stats.restarts += 1;
-            }
+                /*
+                 * Determine whether this was an intentional
+                 * stop or an unexpected miner exit.
+                 */
+                let should_restart = {
+                    let stopping =
+                        *stop_flag_for_task.lock().await;
 
-            /*
-             * Remove the dead process from the running map.
-             */
-            manager
-                .running
-                .lock()
-                .await
-                .remove(&worker_id);
+                    !stopping
+                };
 
-            /*
-             * Delay before restarting.
-             */
-            tokio::time::sleep(
-                std::time::Duration::from_secs(3),
-            )
-            .await;
-
-            /*
-             * Check again after the delay in case the user
-             * stopped the worker while we were waiting.
-             */
-            let stopped_during_delay = {
-                let stopping =
-                    *stop_flag_for_task.lock().await;
-
-                stopping
-            };
-
-            if stopped_during_delay {
-                return;
-            }
-
-            /*
-             * Re-read the configuration. This means changes
-             * made through the GUI are picked up on restart.
-             */
-            let cfg = match manager
-                .configs
-                .read()
-                .await
-                .get(&worker_id)
-                .cloned()
-            {
-                Some(cfg) => cfg,
-
-                None => {
-                    eprintln!(
-                        "Worker {} configuration no longer exists",
-                        worker_id
-                    );
-
+                if !should_restart {
+                    /*
+                     * Manual stop.
+                     */
                     return;
                 }
-            };
+
+                /*
+                 * Miner crashed/exited unexpectedly.
+                 */
+                {
+                    let mut stats =
+                        stats_for_task.lock().await;
+
+                    stats.restarts += 1;
+                }
+
+                /*
+                 * Remove the dead process from the running map.
+                 */
+                manager
+                    .running
+                    .lock()
+                    .await
+                    .remove(&worker_id);
+
+                /*
+                 * Delay before restarting.
+                 */
+                tokio::time::sleep(
+                    std::time::Duration::from_secs(3),
+                )
+                .await;
+
+                /*
+                 * Check again after the delay in case the user
+                 * stopped the worker while we were waiting.
+                 */
+                let stopped_during_delay = {
+                    let stopping =
+                        *stop_flag_for_task.lock().await;
+
+                    stopping
+                };
+
+                if stopped_during_delay {
+                    return;
+                }
+
+                /*
+                 * Re-read the configuration. This means changes
+                 * made through the GUI are picked up on restart.
+                 */
+                let cfg = match manager
+                    .configs
+                    .read()
+                    .await
+                    .get(&worker_id)
+                    .cloned()
+                {
+                    Some(cfg) => cfg,
+
+                    None => {
+                        eprintln!(
+                            "Worker {} configuration no longer exists",
+                            worker_id
+                        );
+
+                        return;
+                    }
+                };
+
+                /*
+                 * Start the replacement worker.
+                 *
+                 * We intentionally do not await spawn_worker()
+                 * from the current supervisor task.
+                 *
+                 * Instead, this supervisor task finishes and a
+                 * completely independent Tokio task performs the
+                 * restart -- calling the boxed spawn_worker() above,
+                 * which is now a well-formed, finite type to await.
+                 */
+                let manager_for_restart =
+                    manager.clone();
+
+                let stats_for_restart =
+                    stats_for_task.clone();
+
+                let id_for_restart =
+                    worker_id.clone();
+
+                tokio::spawn(async move {
+                    if let Err(err) =
+                        manager_for_restart
+                            .spawn_worker(
+                                id_for_restart.clone(),
+                                cfg,
+                                stats_for_restart,
+                            )
+                            .await
+                    {
+                        eprintln!(
+                            "Failed to restart worker {}: {}",
+                            id_for_restart,
+                            err
+                        );
+                    }
+                });
+            });
 
             /*
-             * Start the replacement worker.
-             *
-             * We intentionally do not await spawn_worker()
-             * from the current supervisor task.
-             *
-             * Instead, this supervisor task finishes and a
-             * completely independent Tokio task performs the
-             * restart.
+             * Register the process.
              */
-            let manager_for_restart =
-                manager.clone();
+            self.running.lock().await.insert(
+                id,
+                RunningWorker {
+                    child,
+                    supervisor_task,
+                    stop_flag,
+                },
+            );
 
-            let stats_for_restart =
-                stats_for_task.clone();
-
-            let id_for_restart =
-                worker_id.clone();
-
-            tokio::spawn(async move {
-                if let Err(err) =
-                    manager_for_restart
-                        .spawn_worker(
-                            id_for_restart.clone(),
-                            cfg,
-                            stats_for_restart,
-                        )
-                        .await
-                {
-                    eprintln!(
-                        "Failed to restart worker {}: {}",
-                        id_for_restart,
-                        err
-                    );
-                }
-            });
-        });
-
-        /*
-         * Register the process.
-         */
-        self.running.lock().await.insert(
-            id,
-            RunningWorker {
-                child,
-                supervisor_task,
-                stop_flag,
-            },
-        );
-
-        Ok(())
+            Ok(())
+        })
     }
 
     pub async fn stop(&self, id: &str) {
