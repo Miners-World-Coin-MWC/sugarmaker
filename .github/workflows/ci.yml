@@ -40,6 +40,7 @@ jobs:
             arch: x86_64
             native: true
             rust_target: x86_64-unknown-linux-gnu
+            gui: false
 
           - name: i686-linux
             os: ubuntu-22.04
@@ -48,9 +49,6 @@ jobs:
             native: false
             cross_host: i686-linux-gnu
             rust_target: i686-unknown-linux-gnu
-            # GUI can't cross-link webkit2gtk from an x86_64 host here -- see
-            # the build-gui-i686-linux job at the bottom of this file, which
-            # builds the GUI natively inside a linux/386 container instead.
             gui: false
 
           - name: armv7l-linux
@@ -60,8 +58,6 @@ jobs:
             native: false
             cross_host: arm-linux-gnueabihf
             rust_target: armv7-unknown-linux-gnueabihf
-            # GUI is built by the build-gui-qemu job at the bottom of this
-            # file instead (needs real QEMU emulation, not cross-linking).
             gui: false
 
           - name: aarch64-linux
@@ -71,8 +67,6 @@ jobs:
             native: false
             cross_host: aarch64-linux-gnu
             rust_target: aarch64-unknown-linux-gnu
-            # GUI is built by the build-gui-qemu job at the bottom of this
-            # file instead (needs real QEMU emulation, not cross-linking).
             gui: false
 
           - name: aarch64-linux-native
@@ -81,6 +75,7 @@ jobs:
             arch: aarch64
             native: true
             rust_target: aarch64-unknown-linux-gnu
+            gui: false
 
           - name: riscv64-linux
             os: ubuntu-22.04
@@ -89,8 +84,6 @@ jobs:
             native: false
             cross_host: riscv64-linux-gnu
             rust_target: riscv64gc-unknown-linux-gnu
-            # GUI is built by the build-gui-qemu job at the bottom of this
-            # file instead (needs real QEMU emulation, not cross-linking).
             gui: false
 
           # ==================================================================
@@ -103,6 +96,7 @@ jobs:
             arch: x86_64
             host: x86_64-apple-darwin
             rust_target: x86_64-apple-darwin
+            gui: true
 
           - name: arm64-macos
             os: macos-latest
@@ -110,6 +104,7 @@ jobs:
             arch: arm64
             host: arm64-apple-darwin
             rust_target: aarch64-apple-darwin
+            gui: true
 
           # ==================================================================
           # WINDOWS
@@ -122,6 +117,7 @@ jobs:
             native: true
             msystem: MINGW64
             rust_target: x86_64-pc-windows-msvc
+            gui: true
 
           - name: i686-win
             os: ubuntu-22.04
@@ -129,6 +125,7 @@ jobs:
             arch: i686
             native: false
             rust_target: i686-pc-windows-gnu
+            gui: false
 
           - name: arm64-win
             os: windows-11-arm
@@ -137,6 +134,7 @@ jobs:
             native: true
             msystem: CLANGARM64
             rust_target: aarch64-pc-windows-msvc
+            gui: true
 
 
     steps:
@@ -191,9 +189,6 @@ jobs:
             libjansson-dev \
             libssl-dev \
             libgmp-dev \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
             patchelf
 
 
@@ -223,9 +218,6 @@ jobs:
                 gcc-multilib \
                 g++-multilib \
                 libcurl4-openssl-dev:i386 \
-                libwebkit2gtk-4.1-dev \
-                libappindicator3-dev \
-                librsvg2-dev \
                 patchelf
               ;;
 
@@ -237,9 +229,6 @@ jobs:
                 pkg-config \
                 gcc-arm-linux-gnueabihf \
                 g++-arm-linux-gnueabihf \
-                libwebkit2gtk-4.1-dev \
-                libappindicator3-dev \
-                librsvg2-dev \
                 patchelf
               ;;
 
@@ -251,9 +240,6 @@ jobs:
                 pkg-config \
                 gcc-aarch64-linux-gnu \
                 g++-aarch64-linux-gnu \
-                libwebkit2gtk-4.1-dev \
-                libappindicator3-dev \
-                librsvg2-dev \
                 patchelf
               ;;
 
@@ -265,9 +251,6 @@ jobs:
                 pkg-config \
                 gcc-riscv64-linux-gnu \
                 g++-riscv64-linux-gnu \
-                libwebkit2gtk-4.1-dev \
-                libappindicator3-dev \
-                librsvg2-dev \
                 patchelf
               ;;
 
@@ -774,30 +757,11 @@ jobs:
 
 
       # ======================================================================
-      # INSTALL LINUX GUI DEPENDENCIES
-      # ======================================================================
-
-      - name: Install GUI dependencies - Linux
-        if: runner.os == 'Linux' && matrix.gui != false
-        shell: bash
-        run: |
-          set -e
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
-
-      # ======================================================================
       # INSTALL GUI DEPENDENCIES - WINDOWS
       # ======================================================================
 
       - name: Prepare Windows GUI environment
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.gui == true
         shell: pwsh
         run: |
           Write-Host "Preparing Windows GUI build environment"
@@ -808,6 +772,7 @@ jobs:
       # ======================================================================
 
       - name: Prepare GUI miner resource
+        if: matrix.gui == true
         shell: bash
         run: |
           set -e
@@ -838,19 +803,20 @@ jobs:
       # ======================================================================
 
       - name: Install agent frontend dependencies
-        if: matrix.gui != false
+        if: matrix.gui == true
         working-directory: gui/agent
         shell: bash
         run: |
           set -e
           npm install
 
+
       # ======================================================================
       # INSTALL DASHBOARD DEPENDENCIES
       # ======================================================================
 
       - name: Install dashboard frontend dependencies
-        if: matrix.gui != false
+        if: matrix.gui == true
         working-directory: gui/dashboard
         shell: bash
         run: |
@@ -863,7 +829,7 @@ jobs:
       # ======================================================================
 
       - name: Build Agent GUI
-        if: matrix.gui != false
+        if: matrix.gui == true
         working-directory: gui/agent
         shell: bash
         run: |
@@ -886,7 +852,7 @@ jobs:
       # ======================================================================
 
       - name: Build Dashboard GUI
-        if: matrix.gui != false
+        if: matrix.gui == true
         working-directory: gui/dashboard
         shell: bash
         run: |
@@ -913,40 +879,57 @@ jobs:
         run: |
           set -e
 
-          mkdir -p dist
+          # --------------------------------------------------------------
+          # IMPORTANT:
+          # The artifact itself contains ONLY the dist/ directory.
+          #
+          # dist/
+          # ├── miner/
+          # ├── agent/
+          # └── dashboard/
+          # --------------------------------------------------------------
+
+          rm -rf dist
+
+          mkdir -p dist/miner
 
           # --------------------------------------------------------------
           # Miner
           # --------------------------------------------------------------
 
-          mkdir -p dist/miner
-
           cp -r build-miner/* dist/miner/
-
 
           # --------------------------------------------------------------
           # Agent GUI
           # --------------------------------------------------------------
 
-          if [ -d "gui/agent/src-tauri/target/${{ matrix.rust_target }}/release/bundle" ]; then
-            mkdir -p dist/agent
-            cp -r \
-              "gui/agent/src-tauri/target/${{ matrix.rust_target }}/release/bundle/"* \
-              dist/agent/ || true
-          fi
+          if [ "${{ matrix.gui }}" = "true" ]; then
 
+            mkdir -p dist/agent
+
+            AGENT_BUNDLE="gui/agent/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+
+            if [ -d "$AGENT_BUNDLE" ]; then
+              cp -r "$AGENT_BUNDLE"/* dist/agent/ || true
+            fi
+
+          fi
 
           # --------------------------------------------------------------
           # Dashboard GUI
           # --------------------------------------------------------------
 
-          if [ -d "gui/dashboard/src-tauri/target/${{ matrix.rust_target }}/release/bundle" ]; then
-            mkdir -p dist/dashboard
-            cp -r \
-              "gui/dashboard/src-tauri/target/${{ matrix.rust_target }}/release/bundle/"* \
-              dist/dashboard/ || true
-          fi
+          if [ "${{ matrix.gui }}" = "true" ]; then
 
+            mkdir -p dist/dashboard
+
+            DASHBOARD_BUNDLE="gui/dashboard/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+
+            if [ -d "$DASHBOARD_BUNDLE" ]; then
+              cp -r "$DASHBOARD_BUNDLE"/* dist/dashboard/ || true
+            fi
+
+          fi
 
           # --------------------------------------------------------------
           # Build information
@@ -970,16 +953,33 @@ jobs:
 
           Components:
             - Sugarmaker CPU Miner
+          EOF
+
+          if [ "${{ matrix.gui }}" = "true" ]; then
+            cat >> dist/BUILD-INFO.txt <<EOF
             - Sugarmaker Agent GUI
             - Sugarmaker Dashboard GUI
           EOF
-
+          else
+            cat >> dist/BUILD-INFO.txt <<EOF
+            - GUI disabled for this target
+          EOF
+          fi
 
           echo "============================================================"
           echo "FINAL BUILD"
           echo "============================================================"
 
-          find dist -maxdepth 3 -type f -print
+          echo ""
+          echo "Final directory layout:"
+          find dist -maxdepth 4 -print
+
+          echo ""
+          echo "Final files:"
+          find dist -type f -print
+
+          echo ""
+          echo "Final size:"
           du -sh dist || true
 
 
@@ -991,186 +991,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sugarmaker-${{ matrix.name }}
-          path: dist/**
+          path: dist
           if-no-files-found: error
-
-
-  # ==========================================================================
-  # GUI FOR GTK-CROSS-BLOCKED LINUX TARGETS (i686, armv7l, aarch64, riscv64)
-  # ==========================================================================
-  # These four can't cross-link webkit2gtk from an x86_64 host -- there's no
-  # foreign-arch libwebkit2gtk-4.1-dev package to point pkg-config at (the
-  # build job above still cross-compiles the CLI miner for these fine; only
-  # the GUI needed this). Instead of cross-linking, these jobs run the actual
-  # build natively inside an emulated container of that architecture, so
-  # `apt install libwebkit2gtk-4.1-dev` installs the real, correct-arch
-  # package and cargo/npm just see a normal native host -- same GUI, same
-  # bundle format, as every other platform gets from the build job above.
-  #
-  # i686 doesn't need real emulation -- 32-bit x86 code runs directly on the
-  # amd64 runner CPU, so that variant uses a plain linux/386 container (fast,
-  # no QEMU). armv7l/aarch64/riscv64 genuinely need QEMU, via
-  # uraimo/run-on-arch-action, and are correspondingly much slower.
-
-  build-gui-i686-linux:
-    name: gui (i686-linux, native 32-bit container)
-    needs: build
-    runs-on: ubuntu-22.04
-    container:
-      image: i386/ubuntu:22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download miner binary from the build job
-        uses: actions/download-artifact@v4
-        with:
-          name: sugarmaker-i686-linux
-          path: downloaded
-
-      - name: Install toolchain + GUI deps (native i386 packages)
-        shell: bash
-        run: |
-          set -e
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            curl ca-certificates build-essential pkg-config \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            libssl-dev patchelf file git
-
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-          apt-get install -y nodejs
-
-      - name: Place miner binary in GUI resources
-        shell: bash
-        run: |
-          set -e
-          mkdir -p gui/agent/src-tauri/binaries
-          cp downloaded/miner/sugarmaker gui/agent/src-tauri/binaries/sugarmaker
-          chmod +x gui/agent/src-tauri/binaries/sugarmaker
-
-      - name: Build agent + dashboard GUI (native in-container)
-        shell: bash
-        run: |
-          set -e
-          export PATH="$HOME/.cargo/bin:$PATH"
-
-          cd gui/agent
-          npm install
-          npm run build
-          npx tauri build
-          cd ../dashboard
-          npm install
-          npm run build
-          npx tauri build
-
-      - name: Collect artifact
-        shell: bash
-        run: |
-          set -e
-          mkdir -p dist/agent dist/dashboard
-          cp -r gui/agent/src-tauri/target/release/bundle/* dist/agent/ || true
-          cp -r gui/dashboard/src-tauri/target/release/bundle/* dist/dashboard/ || true
-          cp -r downloaded/miner dist/miner
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sugarmaker-gui-i686-linux
-          path: dist/**
-          if-no-files-found: warn
-
-  build-gui-qemu:
-    name: gui (${{ matrix.name }}, QEMU)
-    needs: build
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: armv7l-linux
-            artifact_name: sugarmaker-armv7l-linux
-            qemu_arch: armv7
-            qemu_distro: ubuntu22.04
-
-          - name: aarch64-linux
-            artifact_name: sugarmaker-aarch64-linux
-            qemu_arch: aarch64
-            qemu_distro: ubuntu22.04
-
-          - name: riscv64-linux
-            artifact_name: sugarmaker-riscv64-linux
-            qemu_arch: riscv64
-            qemu_distro: ubuntu22.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download miner binary from the build job
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.artifact_name }}
-          path: downloaded
-
-      - name: Build inside emulated ${{ matrix.qemu_arch }} container
-        uses: uraimo/run-on-arch-action@v2
-        id: build
-        with:
-          arch: ${{ matrix.qemu_arch }}
-          distro: ${{ matrix.qemu_distro }}
-          githubToken: ${{ github.token }}
-
-          # Bind-mount the checked-out repo + downloaded miner binary into
-          # the emulated container at the same paths the run: script uses.
-          dockerRunArgs: |
-            --volume "${PWD}:/workspace"
-
-          install: |
-            apt-get update -q -y
-            apt-get install -q -y --no-install-recommends \
-              curl ca-certificates build-essential pkg-config \
-              libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-              libssl-dev patchelf file git
-
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-
-            curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-            apt-get install -q -y nodejs
-
-          run: |
-            set -e
-            export PATH="$HOME/.cargo/bin:$PATH"
-            cd /workspace
-
-            mkdir -p gui/agent/src-tauri/binaries
-            cp downloaded/miner/sugarmaker gui/agent/src-tauri/binaries/sugarmaker
-            chmod +x gui/agent/src-tauri/binaries/sugarmaker
-
-            cd gui/agent
-            npm install
-            npm run build
-            npx tauri build
-            cd ../dashboard
-            npm install
-            npm run build
-            npx tauri build
-
-      - name: Collect artifact
-        shell: bash
-        run: |
-          set -e
-          mkdir -p dist/agent dist/dashboard
-          cp -r gui/agent/src-tauri/target/release/bundle/* dist/agent/ || true
-          cp -r gui/dashboard/src-tauri/target/release/bundle/* dist/dashboard/ || true
-          cp -r downloaded/miner dist/miner
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sugarmaker-gui-${{ matrix.name }}
-          path: dist/**
-          if-no-files-found: warn
