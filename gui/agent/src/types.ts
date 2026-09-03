@@ -1,6 +1,7 @@
 export interface WorkerConfig {
   id: string;
   label: string;
+  algo: string;
   pool_url: string;
   username: string;
   password: string;
@@ -36,6 +37,7 @@ export function emptyWorker(label: string): WorkerConfig {
   return {
     id: crypto.randomUUID(),
     label,
+    algo: "YespowerMwc",
     pool_url: "stratum+tcp://bmine.net:3033",
     username: "",
     password: "x",
@@ -48,7 +50,13 @@ export function emptyWorker(label: string): WorkerConfig {
 }
 
 export function formatHashrate(hps: number): string {
-  if (hps >= 1_000_000) return (hps / 1_000_000).toFixed(2) + " MH/s";
-  if (hps >= 1_000) return (hps / 1_000).toFixed(2) + " kH/s";
+  if (hps >= 1_000_000) {
+    return (hps / 1_000_000).toFixed(2) + " MH/s";
+  }
+
+  if (hps >= 1_000) {
+    return (hps / 1_000).toFixed(2) + " kH/s";
+  }
+
   return hps.toFixed(1) + " H/s";
 }

@@ -13,23 +13,41 @@ pub fn set_resource_dir(dir: PathBuf) {
     let _ = RESOURCE_DIR.set(dir);
 }
 
+/// Default algorithm used by the MWC GUI.
+fn default_algorithm() -> String {
+    "YespowerMwc".to_string()
+}
+
 /// One worker = one `sugarmaker` process with its own CLI args.
 /// Maps directly onto sugarmaker's own flags so we don't reinvent anything.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerConfig {
     pub id: String,
     pub label: String,
+
+    /// Mining algorithm.
+    /// Defaults to YespowerMwc for existing worker configurations that do not
+    /// yet contain an `algo` field.
+    #[serde(default = "default_algorithm")]
+    pub algo: String,
+
     /// e.g. "stratum+tcp://bmine.net:3033" or a local solo RPC URL
     pub pool_url: String,
+
     pub username: String,
     pub password: String,
-    /// only used for solo mining (-o http://127.0.0.1:xxxxx)
+
+    /// only used for solo mining
     pub coinbase_addr: Option<String>,
+
     pub threads: u32,
+
     /// path to the sugarmaker binary for this platform; defaults to "sugarmaker" on PATH
     pub binary_path: Option<String>,
+
     /// any extra raw CLI flags the user wants appended verbatim
     pub extra_args: Vec<String>,
+
     pub autostart: bool,
 }
 
@@ -38,6 +56,7 @@ impl WorkerConfig {
         Self {
             id: Uuid::new_v4().to_string(),
             label: label.to_string(),
+            algo: default_algorithm(),
             pool_url: "stratum+tcp://bmine.net:3033".to_string(),
             username: String::new(),
             password: "x".to_string(),
@@ -49,24 +68,44 @@ impl WorkerConfig {
         }
     }
 
-    /// Builds the argv (without the binary itself) to pass to Command::args
+    /// Builds the argv (without the binary itself) to pass to Command::args.
+    ///
+    /// Produces:
+    ///
+    /// sugarmaker --a YespowerMwc --url <pool> --threads <threads>
+    ///            --user <wallet.worker> --pass <password>
     pub fn to_args(&self) -> Vec<String> {
+        let algorithm = if self.algo.trim().is_empty() {
+            default_algorithm()
+        } else {
+            self.algo.trim().to_string()
+        };
+
         let mut args = vec![
-            "-o".to_string(),
+            "--a".to_string(),
+            algorithm,
+
+            "--url".to_string(),
             self.pool_url.clone(),
-            "-u".to_string(),
-            self.username.clone(),
-            "-p".to_string(),
-            self.password.clone(),
-            "-t".to_string(),
+
+            "--threads".to_string(),
             self.threads.to_string(),
+
+            "--user".to_string(),
+            self.username.clone(),
+
+            "--pass".to_string(),
+            self.password.clone(),
         ];
+
         if let Some(addr) = &self.coinbase_addr {
             if !addr.is_empty() {
                 args.push(format!("--coinbase-addr={}", addr));
             }
         }
+
         args.extend(self.extra_args.clone());
+
         args
     }
 
@@ -82,12 +121,15 @@ impl WorkerConfig {
                 return p.clone();
             }
         }
+
         if let Some(dir) = RESOURCE_DIR.get() {
             let bundled = dir.join("binaries").join(default_binary_name());
+
             if bundled.exists() {
                 return bundled.to_string_lossy().to_string();
             }
         }
+
         default_binary_name()
     }
 }
@@ -105,7 +147,9 @@ fn default_binary_name() -> String {
 fn config_dir() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     let dir = base.join("sugarmaker-gui");
+
     let _ = fs::create_dir_all(&dir);
+
     dir
 }
 
@@ -115,17 +159,21 @@ fn config_path() -> PathBuf {
 
 pub fn load_workers() -> Vec<WorkerConfig> {
     let path = config_path();
+
     if let Ok(bytes) = fs::read(&path) {
         if let Ok(list) = serde_json::from_slice::<Vec<WorkerConfig>>(&bytes) {
             return list;
         }
     }
+
     vec![]
 }
 
 pub fn save_workers(workers: &[WorkerConfig]) -> anyhow::Result<()> {
     let path = config_path();
     let bytes = serde_json::to_vec_pretty(workers)?;
+
     fs::write(path, bytes)?;
+
     Ok(())
 }

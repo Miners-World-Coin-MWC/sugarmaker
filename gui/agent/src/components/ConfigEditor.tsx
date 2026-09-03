@@ -21,7 +21,20 @@ export default function ConfigEditor({ initial, onSave, onCancel }: Props) {
 
         <label>
           Label
-          <input value={form.label} onChange={(e) => set("label", e.target.value)} />
+          <input
+            value={form.label}
+            onChange={(e) => set("label", e.target.value)}
+          />
+        </label>
+
+        <label>
+          Algorithm
+          <select
+            value={form.algo}
+            onChange={(e) => set("algo", e.target.value)}
+          >
+            <option value="YespowerMwc">YespowerMwc</option>
+          </select>
         </label>
 
         <label>
@@ -35,19 +48,27 @@ export default function ConfigEditor({ initial, onSave, onCancel }: Props) {
 
         <label>
           Username / wallet address
-          <input value={form.username} onChange={(e) => set("username", e.target.value)} />
+          <input
+            value={form.username}
+            onChange={(e) => set("username", e.target.value)}
+          />
         </label>
 
         <label>
           Password
-          <input value={form.password} onChange={(e) => set("password", e.target.value)} />
+          <input
+            value={form.password}
+            onChange={(e) => set("password", e.target.value)}
+          />
         </label>
 
         <label>
           Coinbase address (solo mining only, leave blank for pool)
           <input
             value={form.coinbase_addr ?? ""}
-            onChange={(e) => set("coinbase_addr", e.target.value || null)}
+            onChange={(e) =>
+              set("coinbase_addr", e.target.value || null)
+            }
           />
         </label>
 
@@ -57,7 +78,9 @@ export default function ConfigEditor({ initial, onSave, onCancel }: Props) {
             type="number"
             min={1}
             value={form.threads}
-            onChange={(e) => set("threads", parseInt(e.target.value, 10) || 1)}
+            onChange={(e) =>
+              set("threads", parseInt(e.target.value, 10) || 1)
+            }
           />
         </label>
 
@@ -65,7 +88,9 @@ export default function ConfigEditor({ initial, onSave, onCancel }: Props) {
           Binary path (blank = use the sugarmaker build bundled with this app)
           <input
             value={form.binary_path ?? ""}
-            onChange={(e) => set("binary_path", e.target.value || null)}
+            onChange={(e) =>
+              set("binary_path", e.target.value || null)
+            }
           />
         </label>
 
@@ -73,7 +98,12 @@ export default function ConfigEditor({ initial, onSave, onCancel }: Props) {
           Extra CLI args (space separated)
           <input
             value={form.extra_args.join(" ")}
-            onChange={(e) => set("extra_args", e.target.value.split(" ").filter(Boolean))}
+            onChange={(e) =>
+              set(
+                "extra_args",
+                e.target.value.split(" ").filter(Boolean)
+              )
+            }
           />
         </label>
 
