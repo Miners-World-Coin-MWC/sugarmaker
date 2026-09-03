@@ -29,12 +29,12 @@ export default function ConfigEditor({ initial, onSave, onCancel }: Props) {
 
         <label>
           Algorithm
-          <select
+          <input
+            type="text"
             value={form.algo}
             onChange={(e) => set("algo", e.target.value)}
-          >
-            <option value="YespowerMwc">YespowerMwc</option>
-          </select>
+            placeholder="YespowerMwc"
+          />
         </label>
 
         <label>
