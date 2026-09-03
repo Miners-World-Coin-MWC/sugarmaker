@@ -19,7 +19,7 @@ pub fn set_resource_dir(dir: PathBuf) {
 pub struct WorkerConfig {
     pub id: String,
     pub label: String,
-    /// e.g. "stratum+tcp://1pool.sugarchain.org:3333" or a local solo RPC URL
+    /// e.g. "stratum+tcp://bmine.net:3033" or a local solo RPC URL
     pub pool_url: String,
     pub username: String,
     pub password: String,
@@ -38,7 +38,7 @@ impl WorkerConfig {
         Self {
             id: Uuid::new_v4().to_string(),
             label: label.to_string(),
-            pool_url: "stratum+tcp://1pool.sugarchain.org:3333".to_string(),
+            pool_url: "stratum+tcp://bmine.net:3033".to_string(),
             username: String::new(),
             password: "x".to_string(),
             coinbase_addr: None,

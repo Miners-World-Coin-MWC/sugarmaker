@@ -744,6 +744,12 @@ jobs:
 
           fi
 
+          echo "============================================================"
+          echo "Detecting required Windows DLLs"
+          echo "============================================================"
+
+          ldd sugarmaker.exe || true
+
           ldd sugarmaker.exe \
             | grep "$DLL_DIR" \
             | awk '{print $3}' \
@@ -752,12 +758,15 @@ jobs:
                 [ -f "$dll" ] && cp "$dll" build-miner/
               done
 
+          echo "============================================================"
           echo "Bundled Windows runtime libraries:"
+          echo "============================================================"
+
           ls -lh build-miner/
 
 
       # ======================================================================
-      # INSTALL GUI DEPENDENCIES - WINDOWS
+      # WINDOWS GUI ENVIRONMENT
       # ======================================================================
 
       - name: Prepare Windows GUI environment
@@ -768,34 +777,39 @@ jobs:
 
 
       # ======================================================================
-      # PUT MINER INTO TAURI RESOURCES
+      # PUT COMPLETE MINER RUNTIME INTO TAURI RESOURCES
       # ======================================================================
 
-      - name: Prepare GUI miner resource
+      - name: Prepare GUI miner resources
         if: matrix.gui == true
         shell: bash
         run: |
           set -e
 
-          mkdir -p gui/agent/src-tauri/binaries
+          RESOURCE_DIR="gui/agent/src-tauri/binaries"
 
-          if [ "${{ matrix.platform }}" = "windows" ] || [ "${{ matrix.platform }}" = "win32-cross" ]; then
+          rm -rf "$RESOURCE_DIR"
+          mkdir -p "$RESOURCE_DIR"
 
-            cp build-miner/sugarmaker.exe \
-              gui/agent/src-tauri/binaries/sugarmaker.exe
+          echo "============================================================"
+          echo "Preparing complete miner runtime for GUI"
+          echo "============================================================"
 
-          else
+          # Copy the complete miner runtime, including Windows DLLs.
+          cp -r build-miner/* "$RESOURCE_DIR/"
 
-            cp build-miner/sugarmaker \
-              gui/agent/src-tauri/binaries/sugarmaker
-
+          # Make native Unix miner executable.
+          if [ "${{ matrix.platform }}" != "windows" ] && [ "${{ matrix.platform }}" != "win32-cross" ]; then
+            chmod +x "$RESOURCE_DIR/sugarmaker"
           fi
 
-          echo "============================================================"
-          echo "GUI miner resource prepared"
-          echo "============================================================"
+          echo ""
+          echo "GUI miner resources:"
+          find "$RESOURCE_DIR" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null || ls -lh "$RESOURCE_DIR"
 
-          ls -lh gui/agent/src-tauri/binaries/
+          echo ""
+          echo "Resource directory:"
+          ls -lh "$RESOURCE_DIR"
 
 
       # ======================================================================
@@ -880,13 +894,14 @@ jobs:
           set -e
 
           # --------------------------------------------------------------
-          # IMPORTANT:
-          # The artifact itself contains ONLY the dist/ directory.
+          # The uploaded artifact contains ONLY:
           #
           # dist/
           # ├── miner/
           # ├── agent/
           # └── dashboard/
+          #
+          # GUI directories are only created for GUI-enabled targets.
           # --------------------------------------------------------------
 
           rm -rf dist
@@ -909,9 +924,13 @@ jobs:
 
             AGENT_BUNDLE="gui/agent/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
 
-            if [ -d "$AGENT_BUNDLE" ]; then
-              cp -r "$AGENT_BUNDLE"/* dist/agent/ || true
+            if [ ! -d "$AGENT_BUNDLE" ]; then
+              echo "ERROR: Agent bundle directory was not created:"
+              echo "$AGENT_BUNDLE"
+              exit 1
             fi
+
+            cp -r "$AGENT_BUNDLE"/* dist/agent/
 
           fi
 
@@ -925,9 +944,13 @@ jobs:
 
             DASHBOARD_BUNDLE="gui/dashboard/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
 
-            if [ -d "$DASHBOARD_BUNDLE" ]; then
-              cp -r "$DASHBOARD_BUNDLE"/* dist/dashboard/ || true
+            if [ ! -d "$DASHBOARD_BUNDLE" ]; then
+              echo "ERROR: Dashboard bundle directory was not created:"
+              echo "$DASHBOARD_BUNDLE"
+              exit 1
             fi
+
+            cp -r "$DASHBOARD_BUNDLE"/* dist/dashboard/
 
           fi
 
@@ -950,6 +973,9 @@ jobs:
 
           Rust Target:
             ${{ matrix.rust_target }}
+
+          Algorithm:
+            YespowerMwc
 
           Components:
             - Sugarmaker CPU Miner

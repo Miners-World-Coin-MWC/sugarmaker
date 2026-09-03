@@ -56,7 +56,7 @@ Run `sugarmaker --help` to see options. You can solo-mine using these options:
 ```
 - Mainnet (Stratum Pool)
 ```
-./sugarmaker -o stratum+tcp://1pool.sugarchain.org:3333 -u sugar1qv0ahzfa2ssu47wes89390sl0jz6g05h0267u8g -t1
+./sugarmaker -o stratum+tcp://bmine.net:3033 -u sugar1qv0ahzfa2ssu47wes89390sl0jz6g05h0267u8g -t1
 ```
 - Testnet (Solo)
 ```

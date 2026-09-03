@@ -29,7 +29,7 @@ export default function ConfigEditor({ initial, onSave, onCancel }: Props) {
           <input
             value={form.pool_url}
             onChange={(e) => set("pool_url", e.target.value)}
-            placeholder="stratum+tcp://1pool.sugarchain.org:3333"
+            placeholder="stratum+tcp://bmine.net:3033"
           />
         </label>
 

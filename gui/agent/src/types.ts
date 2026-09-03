@@ -36,7 +36,7 @@ export function emptyWorker(label: string): WorkerConfig {
   return {
     id: crypto.randomUUID(),
     label,
-    pool_url: "stratum+tcp://1pool.sugarchain.org:3333",
+    pool_url: "stratum+tcp://bmine.net:3033",
     username: "",
     password: "x",
     coinbase_addr: null,
