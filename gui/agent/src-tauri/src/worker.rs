@@ -160,18 +160,12 @@ impl WorkerManager {
      * NOTE ON THE RETURN TYPE: this function is called recursively on the
      * crash-restart path below (a nested `tokio::spawn` block, still
      * lexically inside this function's body, calls `spawn_worker` again).
-     * If this were a plain `async fn`, the compiler would need to embed
-     * the future's own type inside itself to describe that call, which is
-     * an infinite/self-referential type it can't resolve -- that's what
-     * produced the "future cannot be sent between threads safely" error,
-     * since it also can't prove a Send bound on a type it can't finish
-     * computing.
+     * If this were a plain `async fn`, the compiler would need to embed the
+     * future's own type inside itself to describe that call, which is an
+     * infinite/self-referential type it can't resolve.
      *
-     * Returning a boxed, pinned trait object instead gives the recursive
-     * call (and every other caller) a concrete, finite type to hold and
-     * `.await` -- the same fix pattern as boxing a recursive struct. This
-     * changes nothing at the call sites; `Pin<Box<dyn Future<...>>>` is
-     * itself a `Future`, so `.await` works exactly as before.
+     * Returning a boxed, pinned trait object gives the recursive call
+     * a concrete, finite type to hold and `.await`.
      */
     fn spawn_worker(
         self: &Arc<Self>,
@@ -205,27 +199,16 @@ impl WorkerManager {
                 stats.running = true;
             }
 
-            let stop_flag =
-                Arc::new(Mutex::new(false));
+            let stop_flag = Arc::new(Mutex::new(false));
+            let stop_flag_for_task = stop_flag.clone();
+            let stats_for_task = stats_arc.clone();
 
-            let stop_flag_for_task =
-                stop_flag.clone();
-
-            let stats_for_task =
-                stats_arc.clone();
-
-            let manager =
-                self.clone();
-
-            let worker_id =
-                id.clone();
+            let manager = self.clone();
+            let worker_id = id.clone();
 
             /*
-             * The supervisor task ONLY watches the miner output and,
-             * on an unexpected exit, kicks off a restart via a brand new
-             * top-level tokio::spawn (not by awaiting spawn_worker()
-             * directly from here) -- see the note on the return type
-             * above for why that indirection is what needs boxing.
+             * The supervisor task watches miner output and handles
+             * unexpected exits/restarts.
              */
             let supervisor_task = tokio::spawn(async move {
                 let mut stdout_reader =
@@ -356,8 +339,7 @@ impl WorkerManager {
                 }
 
                 /*
-                 * Re-read the configuration. This means changes
-                 * made through the GUI are picked up on restart.
+                 * Re-read the configuration.
                  */
                 let cfg = match manager
                     .configs
@@ -380,14 +362,6 @@ impl WorkerManager {
 
                 /*
                  * Start the replacement worker.
-                 *
-                 * We intentionally do not await spawn_worker()
-                 * from the current supervisor task.
-                 *
-                 * Instead, this supervisor task finishes and a
-                 * completely independent Tokio task performs the
-                 * restart -- calling the boxed spawn_worker() above,
-                 * which is now a well-formed, finite type to await.
                  */
                 let manager_for_restart =
                     manager.clone();
@@ -537,8 +511,36 @@ async fn apply_line(
             }
         }
 
-        LogEvent::Rejected => {
-            stats.rejected += 1;
+        LogEvent::Rejected {
+            rejected,
+            total,
+            rate_hps,
+        } => {
+            /*
+             * Sugarmaker reports rejected shares as:
+             *
+             * rejected: 9/10 (99.0%), 45.67 kH/s (booo!!!)
+             *
+             * The first number is the cumulative rejected count,
+             * while the second number is the cumulative total.
+             */
+            stats.rejected =
+                rejected;
+
+            stats.total_shares =
+                total;
+
+            /*
+             * If thread-level hashrate hasn't been seen,
+             * use the aggregate rate from the rejected line.
+             */
+            if stats
+                .per_thread_hps
+                .is_empty()
+            {
+                stats.total_hashrate_hps =
+                    rate_hps;
+            }
         }
 
         LogEvent::Unrecognized => {}

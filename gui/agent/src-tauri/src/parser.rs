@@ -9,9 +9,6 @@ use serde::{Deserialize, Serialize};
 ///   12.34 kH/s
 ///   1.25 MH/s
 ///   1.25 GH/s
-///
-/// The current MWC build outputs `hash/s`, so the parser explicitly supports
-/// both `hash/s` and the shorter `H/s` form.
 static THREAD_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?i)thread\s+(\d+):\s+(\d+)\s+hashes,\s+(\d+(?:\.\d+)?)\s*([kKmMgG]?)\s*(?:hash|h)/s\b",
@@ -24,9 +21,6 @@ static THREAD_RE: Lazy<Regex> = Lazy::new(|| {
 ///   accepted: 1/1 (100.00%), 434.4 hash/s (yay!!!)
 ///   accepted: 10/10 (100.00%), 45.67 kH/s (yay!!!)
 ///   accepted: 10/10 (100.00%)
-///
-/// The rate portion is optional so accepted shares are still detected even
-/// when the miner does not print a hashrate on that line.
 static ACCEPTED_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r"(?i)accepted:\s*(\d+)\s*/\s*(\d+)\s*\(([\d.]+)%\)(?:,\s*(\d+(?:\.\d+)?)\s*([kKmMgG]?)\s*(?:hash|h)/s\b)?",
@@ -34,9 +28,23 @@ static ACCEPTED_RE: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
-/// Any line containing "rejected" is treated as a rejected share event.
+/// Rejected share output can look like:
+///
+///   rejected: 9/10 (99.0%), 45.67 kH/s (booo!!!)
+///   rejected: 1/11 (9.09%), 44.00 kH/s
+///   rejected: 1/11 (9.09%)
+///
+/// Groups:
+///   1 = rejected shares
+///   2 = total shares
+///   3 = percentage
+///   4 = optional hashrate
+///   5 = optional hashrate unit
 static REJECTED_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\brejected\b").unwrap()
+    Regex::new(
+        r"(?i)rejected:\s*(\d+)\s*/\s*(\d+)\s*\(([\d.]+)%\)(?:,\s*(\d+(?:\.\d+)?)\s*([kKmMgG]?)\s*(?:hash|h)/s\b)?",
+    )
+    .unwrap()
 });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,7 +61,11 @@ pub enum LogEvent {
         rate_hps: f64,
     },
 
-    Rejected,
+    Rejected {
+        rejected: u64,
+        total: u64,
+        rate_hps: f64,
+    },
 
     Unrecognized,
 }
@@ -113,9 +125,27 @@ pub fn parse_line(line: &str) -> LogEvent {
         };
     }
 
-    // Rejected share.
-    if REJECTED_RE.is_match(line) {
-        return LogEvent::Rejected;
+    // Rejected share:
+    //
+    // rejected: 9/10 (99.0%), 45.67 kH/s (booo!!!)
+    if let Some(caps) = REJECTED_RE.captures(line) {
+        let rejected: u64 = caps[1].parse().unwrap_or(0);
+        let total: u64 = caps[2].parse().unwrap_or(0);
+
+        let rate_hps = if let Some(rate) = caps.get(4) {
+            let value: f64 = rate.as_str().parse().unwrap_or(0.0);
+            let unit = caps.get(5).map(|m| m.as_str()).unwrap_or("");
+
+            scale(value, unit)
+        } else {
+            0.0
+        };
+
+        return LogEvent::Rejected {
+            rejected,
+            total,
+            rate_hps,
+        };
     }
 
     LogEvent::Unrecognized
@@ -292,10 +322,38 @@ mod tests {
     #[test]
     fn parses_rejected_line() {
         let line =
-            "[2024-01-01 12:00:00] rejected: 1/11 (9.09%), 44.00 kH/s";
+            "[2024-01-01 12:00:00] rejected: 9/10 (99.0%), 45.67 kH/s (booo!!!)";
 
         match parse_line(line) {
-            LogEvent::Rejected => {}
+            LogEvent::Rejected {
+                rejected,
+                total,
+                rate_hps,
+            } => {
+                assert_eq!(rejected, 9);
+                assert_eq!(total, 10);
+                assert!((rate_hps - 45670.0).abs() < 0.01);
+            }
+
+            other => panic!("wrong variant: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_rejected_without_rate() {
+        let line =
+            "[2024-01-01 12:00:00] rejected: 1/11 (9.09%)";
+
+        match parse_line(line) {
+            LogEvent::Rejected {
+                rejected,
+                total,
+                rate_hps,
+            } => {
+                assert_eq!(rejected, 1);
+                assert_eq!(total, 11);
+                assert_eq!(rate_hps, 0.0);
+            }
 
             other => panic!("wrong variant: {:?}", other),
         }
