@@ -1,7 +1,3 @@
-export type BenchmarkAlgorithm =
-  | "YespowerMwc"
-  | "YespowerAdvc";
-
 export interface WorkerConfig {
   id: string;
   label: string;
@@ -37,52 +33,12 @@ export interface RigInfo {
   arch: string;
 }
 
-/*
- * Supported CPU benchmark algorithms.
- *
- * Keep this limited to the algorithms implemented
- * by the benchmark executable.
- */
-export type BenchmarkAlgorithm =
-  | "YespowerMwc"
-  | "YespowerAdvc";
-
-/*
- * A single CPU benchmark result.
- *
- * These fields match the benchmark.json schema and
- * the Rust BenchmarkEntry structure.
- */
-export interface BenchmarkEntry {
-  algorithm: BenchmarkAlgorithm;
-  cpu: string;
-  architecture: string;
-  os: string;
-  threads: number;
-  hashrate_hps: number;
-  per_thread_hps: number;
-  duration_seconds: number;
-  sugarmaker_version: string;
-  timestamp: string;
-}
-
-/*
- * The complete benchmark.json file.
- */
-export interface BenchmarkFile {
-  schema_version: number;
-  benchmarks: BenchmarkEntry[];
-}
-
-export function emptyWorker(
-  label: string
-): WorkerConfig {
+export function emptyWorker(label: string): WorkerConfig {
   return {
     id: crypto.randomUUID(),
     label,
     algo: "YespowerMwc",
-    pool_url:
-      "stratum+tcp://bmine.net:3033",
+    pool_url: "stratum+tcp://bmine.net:3033",
     username: "",
     password: "x",
     coinbase_addr: null,
@@ -93,21 +49,13 @@ export function emptyWorker(
   };
 }
 
-export function formatHashrate(
-  hps: number
-): string {
+export function formatHashrate(hps: number): string {
   if (hps >= 1_000_000) {
-    return (
-      (hps / 1_000_000).toFixed(2) +
-      " MH/s"
-    );
+    return (hps / 1_000_000).toFixed(2) + " MH/s";
   }
 
   if (hps >= 1_000) {
-    return (
-      (hps / 1_000).toFixed(2) +
-      " kH/s"
-    );
+    return (hps / 1_000).toFixed(2) + " kH/s";
   }
 
   return hps.toFixed(1) + " H/s";

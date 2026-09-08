@@ -1,6 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod benchmark;
 mod config;
 mod parser;
 mod sysinfo_util;
@@ -29,9 +28,7 @@ struct DashboardConnection {
 }
 
 #[tauri::command]
-async fn list_workers(
-    state: State<'_, AppState>,
-) -> Result<Vec<WorkerConfig>, String> {
+async fn list_workers(state: State<'_, AppState>) -> Result<Vec<WorkerConfig>, String> {
     Ok(state.manager.list_configs().await)
 }
 
@@ -97,31 +94,6 @@ async fn stop_worker(
     Ok(())
 }
 
-/* -------------------------------------------------- */
-/* Benchmark commands */
-/* -------------------------------------------------- */
-
-#[tauri::command]
-async fn load_benchmarks() -> Result<benchmark::BenchmarkFile, String> {
-    benchmark::load_benchmarks()
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn run_benchmark(
-    algorithm: String,
-    threads: u32,
-    duration_seconds: u64,
-) -> Result<benchmark::BenchmarkEntry, String> {
-    benchmark::run_benchmark(
-        algorithm,
-        threads,
-        duration_seconds,
-    )
-    .await
-    .map_err(|e| e.to_string())
-}
-
 /// Detect the local IPv4 address used for network connections.
 ///
 /// This does not actually send data to the target address. Connecting a UDP
@@ -185,8 +157,6 @@ fn main() {
             remove_worker,
             start_worker,
             stop_worker,
-            load_benchmarks,
-            run_benchmark,
         ])
         .run(tauri::generate_context!())
         .expect("error while running sugarmaker-agent");
