@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+
 import WorkerCard from "./components/WorkerCard";
 import ConfigEditor from "./components/ConfigEditor";
+import BenchmarkPanel from "./components/BenchmarkPanel";
+
 import {
   WorkerConfig,
   WorkerStats,
@@ -18,20 +21,37 @@ interface DashboardConnection {
 
 export default function App() {
   const [workers, setWorkers] = useState<WorkerConfig[]>([]);
-  const [stats, setStats] = useState<Record<string, WorkerStats>>({});
+  const [stats, setStats] =
+    useState<Record<string, WorkerStats>>({});
   const [rig, setRig] = useState<RigInfo | null>(null);
+
   const [connection, setConnection] =
     useState<DashboardConnection | null>(null);
-  const [editing, setEditing] = useState<WorkerConfig | null>(null);
+
+  const [editing, setEditing] =
+    useState<WorkerConfig | null>(null);
 
   async function refresh() {
-    const [w, s] = await Promise.all([
-      invoke<WorkerConfig[]>("list_workers"),
-      invoke<Record<string, WorkerStats>>("get_stats"),
-    ]);
+    try {
+      const [w, s] = await Promise.all([
+        invoke<WorkerConfig[]>("list_workers"),
+        invoke<Record<string, WorkerStats>>("get_stats"),
+      ]);
 
-    setWorkers(w);
-    setStats(s);
+      setWorkers(w);
+      setStats(s);
+    } catch (error) {
+      console.error("Failed to refresh workers:", error);
+    }
+  }
+
+  async function loadRigInfo() {
+    try {
+      const info = await invoke<RigInfo>("get_rig_info");
+      setRig(info);
+    } catch (error) {
+      console.error("Failed to get rig information:", error);
+    }
   }
 
   async function loadConnectionInfo() {
@@ -42,13 +62,16 @@ export default function App() {
 
       setConnection(info);
     } catch (error) {
-      console.error("Failed to get dashboard connection info:", error);
+      console.error(
+        "Failed to get dashboard connection info:",
+        error
+      );
     }
   }
 
   useEffect(() => {
     refresh();
-    invoke<RigInfo>("get_rig_info").then(setRig);
+    loadRigInfo();
     loadConnectionInfo();
 
     const interval = setInterval(refresh, 1500);
@@ -57,28 +80,45 @@ export default function App() {
   }, []);
 
   async function handleStart(id: string) {
-    await invoke("start_worker", { id });
-    refresh();
+    try {
+      await invoke("start_worker", { id });
+      await refresh();
+    } catch (error) {
+      console.error("Failed to start worker:", error);
+    }
   }
 
   async function handleStop(id: string) {
-    await invoke("stop_worker", { id });
-    refresh();
+    try {
+      await invoke("stop_worker", { id });
+      await refresh();
+    } catch (error) {
+      console.error("Failed to stop worker:", error);
+    }
   }
 
   async function handleSave(config: WorkerConfig) {
-    await invoke("upsert_worker", { config });
-    setEditing(null);
-    refresh();
+    try {
+      await invoke("upsert_worker", { config });
+      setEditing(null);
+      await refresh();
+    } catch (error) {
+      console.error("Failed to save worker:", error);
+    }
   }
 
   async function handleRemove(id: string) {
-    await invoke("remove_worker", { id });
-    refresh();
+    try {
+      await invoke("remove_worker", { id });
+      await refresh();
+    } catch (error) {
+      console.error("Failed to remove worker:", error);
+    }
   }
 
   const totalHashrate = Object.values(stats).reduce(
-    (sum, s) => sum + (s.total_hashrate_hps || 0),
+    (sum, s) =>
+      sum + (s.total_hashrate_hps || 0),
     0
   );
 
@@ -109,11 +149,13 @@ export default function App() {
 
               <div className="connection-details">
                 <span>
-                  <strong>IP</strong> {connection.ip}
+                  <strong>IP</strong>{" "}
+                  {connection.ip}
                 </span>
 
                 <span>
-                  <strong>Port</strong> {connection.port}
+                  <strong>Port</strong>{" "}
+                  {connection.port}
                 </span>
               </div>
             </div>
@@ -121,28 +163,55 @@ export default function App() {
         </div>
       </header>
 
-      <div className="worker-grid">
-        {workers.map((w) => (
-          <WorkerCard
-            key={w.id}
-            config={w}
-            stats={stats[w.id]}
-            onStart={handleStart}
-            onStop={handleStop}
-            onEdit={setEditing}
-            onRemove={handleRemove}
-          />
-        ))}
+      <main>
+        <section className="workers-section">
+          <div className="section-header">
+            <div>
+              <h2>Workers</h2>
 
-        <button
-          className="add-worker"
-          onClick={() =>
-            setEditing(emptyWorker(`Worker ${workers.length + 1}`))
-          }
-        >
-          + Add worker
-        </button>
-      </div>
+              <span className="subtle">
+                Manage your Sugarmaker mining workers.
+              </span>
+            </div>
+          </div>
+
+          <div className="worker-grid">
+            {workers.map((w) => (
+              <WorkerCard
+                key={w.id}
+                config={w}
+                stats={stats[w.id]}
+                onStart={handleStart}
+                onStop={handleStop}
+                onEdit={setEditing}
+                onRemove={handleRemove}
+              />
+            ))}
+
+            <button
+              className="add-worker"
+              onClick={() =>
+                setEditing(
+                  emptyWorker(
+                    `Worker ${workers.length + 1}`
+                  )
+                )
+              }
+            >
+              + Add worker
+            </button>
+          </div>
+        </section>
+
+        {rig && (
+          <BenchmarkPanel
+            cpu={rig.cpu_brand}
+            architecture={rig.arch}
+            os={rig.os}
+            logicalCores={rig.logical_cores}
+          />
+        )}
+      </main>
 
       {editing && (
         <ConfigEditor
