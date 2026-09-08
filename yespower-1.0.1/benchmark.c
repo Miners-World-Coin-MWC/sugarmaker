@@ -1,262 +1,2031 @@
 /*-
- * Copyright 2013-2018 Alexander Peslyak
- * All rights reserved.
+ * Sugarmaker CPU Benchmark
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted.
+ * Benchmark support for:
+ *   - YespowerMwc
+ *   - YespowerAdvc
  *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
+ * The benchmark produces:
+ *
+ *   1. Human-readable console output
+ *   2. A machine-readable BENCHMARK_RESULT line
+ *   3. A user-specific JSON result file
+ *
+ * The generated JSON can be submitted to the project and added to:
+ *
+ *   benchmarks/benchmark.json
+ *
+ * No database is required.
  */
 
 #include <stdio.h>
-#include <stdlib.h> /* for atoi() */
+#include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
-#include <unistd.h>
 #include <time.h>
-#include <sys/times.h>
-#include <sched.h>
+#include <errno.h>
+#include <stdatomic.h>
 
 #include "yespower.h"
 
-#ifdef _OPENMP
-#include <omp.h>
+#ifdef _WIN32
 
-#define NSAVE 1000
+#include <windows.h>
+#include <process.h>
 
-static uint64_t time_us(void)
-{
-	struct timespec t;
-#ifdef CLOCK_MONOTONIC_RAW
-	if (clock_gettime(CLOCK_MONOTONIC_RAW, &t))
-		return 0;
+#define THREAD_RETURN unsigned __stdcall
+#define THREAD_CALL __stdcall
+
 #else
-	if (clock_gettime(CLOCK_MONOTONIC, &t))
-		return 0;
-#endif
-	return 1 + (uint64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000;
-}
+
+#include <pthread.h>
+#include <unistd.h>
+#include <sys/time.h>
+
+#define THREAD_RETURN void *
+#define THREAD_CALL
+
 #endif
 
-int main(int argc, const char * const *argv)
+
+/* ============================================================================
+ * CONFIGURATION
+ * ========================================================================== */
+
+#define DEFAULT_THREADS 1
+#define DEFAULT_DURATION 30
+
+#define BENCHMARK_RESULT_FILE "benchmark-result.json"
+
+#define MWC_PERS \
+    "Mining made easy and accessible to all - Miners World Coin 2025"
+
+#define ADVC_PERS \
+    "Let the quest begin"
+
+
+/* ============================================================================
+ * TYPES
+ * ========================================================================== */
+
+typedef struct {
+    const char *name;
+    yespower_version_t version;
+    uint32_t N;
+    uint32_t r;
+    const uint8_t *pers;
+    size_t perslen;
+} benchmark_algorithm_t;
+
+
+typedef struct {
+    unsigned int thread_id;
+
+    uint64_t hashes;
+
+    int failed;
+
+    uint8_t src[80];
+
+#ifdef _WIN32
+    HANDLE thread;
+#else
+    pthread_t thread;
+#endif
+
+} benchmark_thread_t;
+
+
+typedef struct {
+    benchmark_thread_t *worker;
+    struct benchmark_context *context;
+} worker_argument_t;
+
+
+typedef struct benchmark_context {
+    const benchmark_algorithm_t *algorithm;
+
+    unsigned int threads;
+
+    unsigned int duration_seconds;
+
+    _Atomic int running;
+
+    _Atomic int failed;
+
+    benchmark_thread_t *workers;
+
+    uint64_t start_time_us;
+
+    uint64_t end_time_us;
+
+} benchmark_context_t;
+
+
+/* ============================================================================
+ * TIME
+ * ========================================================================== */
+
+static uint64_t current_time_us(void)
 {
-	yespower_params_t params = {
-		.version = YESPOWER_0_5,
-		.N = 2048,
-		.r = 8,
-		.pers = (const uint8_t *)"Client Key",
-		.perslen = 10
-	};
+#ifdef _WIN32
 
-	if (argc > 1)
-		params.version = atoi(argv[1]);
-	if (argc > 2)
-		params.N = atoi(argv[2]);
-	if (argc > 3)
-		params.r = atoi(argv[3]);
+    FILETIME ft;
+    ULARGE_INTEGER value;
 
-	printf("version=%.1f N=%u r=%u\n",
-	    params.version * 0.1, params.N, params.r);
+    GetSystemTimeAsFileTime(&ft);
 
-	printf("Will use %.2f KiB RAM\n", 0.125 * params.N * params.r);
+    value.LowPart = ft.dwLowDateTime;
+    value.HighPart = ft.dwHighDateTime;
 
-	static __thread union {
-		uint8_t u8[80];
-		uint32_t u32[20];
-	} src;
-	yespower_binary_t dst;
-	unsigned int i;
+    /*
+     * FILETIME is measured in 100-nanosecond intervals since
+     * January 1, 1601.
+     *
+     * Only differences are used for benchmark timing, so the epoch
+     * itself does not matter here.
+     */
+    return (uint64_t)(value.QuadPart / 10ULL);
 
-	for (i = 0; i < sizeof(src); i++)
-		src.u8[i] = i * 3;
+#else
 
-	if (yespower_tls(src.u8, sizeof(src), &params, &dst)) {
-		puts("FAILED");
-		return 1;
-	}
+    struct timeval tv;
 
-	for (i = 0; i < sizeof(dst); i++)
-		printf("%02x%c", dst.uc[i], i < sizeof(dst) - 1 ? ' ' : '\n');
+    if (gettimeofday(&tv, NULL) != 0)
+        return 0;
 
-	puts("Benchmarking 1 thread ...");
+    return
+        (uint64_t)tv.tv_sec * 1000000ULL +
+        (uint64_t)tv.tv_usec;
 
-	clock_t clk_tck = sysconf(_SC_CLK_TCK);
-	struct tms start_tms, end_tms;
-	clock_t start = times(&start_tms), end;
-	unsigned int n;
-	unsigned long long count;
-#ifdef _OPENMP
-	yespower_binary_t save[NSAVE];
-	unsigned int nsave = 0;
 #endif
-	uint32_t seed = start * 1812433253U;
+}
 
-	n = 1;
-	count = 0;
-	do {
-		for (i = 0; i < n; i++) {
-			yespower_binary_t *p = &dst;
-#ifdef _OPENMP
-			if (nsave < NSAVE)
-				p = &save[nsave++];
+
+/* ============================================================================
+ * CPU / SYSTEM INFORMATION
+ * ========================================================================== */
+
+static void get_architecture(
+    char *buffer,
+    size_t size
+)
+{
+#if defined(__x86_64__) || defined(_M_X64)
+
+    snprintf(buffer, size, "x86_64");
+
+#elif defined(__i386__) || defined(_M_IX86)
+
+    snprintf(buffer, size, "i686");
+
+#elif defined(__aarch64__) || defined(_M_ARM64)
+
+    snprintf(buffer, size, "aarch64");
+
+#elif defined(__arm__) || defined(_M_ARM)
+
+    snprintf(buffer, size, "armv7l");
+
+#elif defined(__riscv) && (__riscv_xlen == 64)
+
+    snprintf(buffer, size, "riscv64");
+
+#elif defined(__riscv) && (__riscv_xlen == 32)
+
+    snprintf(buffer, size, "riscv32");
+
+#else
+
+    snprintf(buffer, size, "unknown");
+
 #endif
-			src.u32[19] = seed + (count + i);
-			if (yespower_tls(src.u8, sizeof(src), &params, p)) {
-				puts("FAILED");
-				return 1;
-			}
-		}
-		count += n;
+}
 
-		end = times(&end_tms);
-		n <<= 1;
-	} while (end - start < clk_tck * 2);
 
-	clock_t start_v = start_tms.tms_utime + start_tms.tms_stime +
-	    start_tms.tms_cutime + start_tms.tms_cstime;
-	clock_t end_v = end_tms.tms_utime + end_tms.tms_stime +
-	    end_tms.tms_cutime + end_tms.tms_cstime;
+static void get_os_name(
+    char *buffer,
+    size_t size
+)
+{
+#ifdef _WIN32
 
-	printf("%llu H/s real, %llu H/s virtual "
-	    "(%llu hashes in %.2f seconds)\n",
-	    count * clk_tck / (end - start),
-	    count * clk_tck / (end_v - start_v),
-	    count, (double)(end - start) / clk_tck);
+    snprintf(buffer, size, "Windows");
 
-	for (i = 0; i < nsave; i++) {
-		unsigned int j;
-		for (j = i + 1; j < nsave; j++) {
-			unsigned int k = 8;
-			if (!memcmp(&save[i], &save[j], k)) {
-				printf("%u-byte collision(s) detected\n", k);
-				i = nsave; break;
-			}
-		}
-	}
+#elif defined(__APPLE__)
 
-#ifdef _OPENMP
-	unsigned int nt = omp_get_max_threads();
+    snprintf(buffer, size, "macOS");
 
-	printf("Benchmarking %u thread%s ...\n",
-	    nt, nt == 1 ? "" : "s");
+#elif defined(__linux__)
 
-	typedef struct {
-		uint64_t min, max, total;
-	} thread_data_s;
-	union {
-		thread_data_s s;
-		uint8_t cachelines[2][64]; /* avoid false sharing */
-	} thread_data[nt]; /* tricky to align this when on stack */
+    snprintf(buffer, size, "Linux");
 
-	unsigned int t;
-	for (t = 0; t < nt; t++) {
-		thread_data_s *td = &thread_data[t].s;
-		td->min = ~(uint64_t)0; td->max = 0; td->total = 0;
-	}
+#elif defined(__FreeBSD__)
 
-	unsigned long long count1 = count, count_restart = 0;
+    snprintf(buffer, size, "FreeBSD");
 
-	if (!geteuid()) {
-		puts("Running as root, so trying to set SCHED_RR");
-#pragma omp parallel
-		{
-			struct sched_param param = { .sched_priority = 1 };
-			if (sched_setscheduler(getpid(), SCHED_RR, &param))
-				perror("sched_setscheduler");
-		}
-	}
+#else
 
-	start = times(&start_tms);
+    snprintf(buffer, size, "Unknown");
 
-	n = count * omp_get_max_threads();
-	count = 0;
-	do {
-#pragma omp parallel for default(none) copyin(src) private(i, dst) shared(n, thread_data, params, seed, count, save, nsave)
-		for (i = 0; i < n; i++) {
-			unsigned int j = count + i;
-
-			src.u32[19] = seed + j;
-
-			uint64_t start1 = time_us();
-
-			if (yespower_tls(src.u8, sizeof(src), &params, &dst)) {
-#pragma omp critical
-				puts("FAILED");
-			}
-
-			uint64_t end1 = time_us();
-			if (end1 < start1)
-				end1 = start1;
-			uint64_t diff1 = end1 - start1;
-
-			thread_data_s *td = &thread_data[omp_get_thread_num()].s;
-			td->total += diff1;
-			if (diff1 < td->min)
-				td->min = diff1;
-			if (diff1 > td->max)
-				td->max = diff1;
-
-#ifdef _OPENMP
-			if (j < nsave && memcmp(&save[j], &dst, sizeof(dst))) {
-#pragma omp critical
-				printf("Mismatch at %u\n", j);
-			}
 #endif
-		}
+}
 
-		count += n;
-		if ((count - n) < count1 && count >= count1) {
-/* Disregard our repeat of single thread's results (could be partially cached
- * by same core, but OTOH other cores not yet warmed up to full clock rate). */
-			start = times(&start_tms);
-			count_restart = count;
-			for (t = 0; t < nt; t++) {
-				thread_data_s *td = &thread_data[t].s;
-				td->min = ~(uint64_t)0; td->max = 0; td->total = 0;
-			}
-		} else {
-			n <<= 1;
-		}
 
-		end = times(&end_tms);
-	} while (end - start < clk_tck);
+static void get_cpu_name(
+    char *buffer,
+    size_t size
+)
+{
+    buffer[0] = '\0';
 
-	if (!count_restart)
-		puts("Didn't reach single-thread's hash count");
-	count -= count_restart;
 
-	start_v = start_tms.tms_utime + start_tms.tms_stime +
-	    start_tms.tms_cutime + start_tms.tms_cstime;
-	end_v = end_tms.tms_utime + end_tms.tms_stime +
-	    end_tms.tms_cutime + end_tms.tms_cstime;
+#ifdef _WIN32
 
-	printf("%llu H/s real, %llu H/s virtual "
-	    "(%llu hashes in %.2f seconds)\n",
-	    count * clk_tck / (end - start),
-	    count * clk_tck / (end_v - start_v),
-	    count, (double)(end - start) / clk_tck);
+    {
+        const char *cpu =
+            getenv("PROCESSOR_IDENTIFIER");
 
-	uint64_t min = ~(uint64_t)0, max = 0, total = 0;
-	for (t = 0; t < nt; t++) {
-		thread_data_s *td = &thread_data[t].s;
-		total += td->total;
-		if (td->min < min)
-			min = td->min;
-		if (td->max > max)
-			max = td->max;
-	}
-	printf("min %.3f ms, avg %.3f ms, max %.3f ms\n",
-		min / 1000.0, total / 1000.0 / count, max / 1000.0);
+        if (cpu && cpu[0])
+        {
+            snprintf(
+                buffer,
+                size,
+                "%s",
+                cpu
+            );
+
+            return;
+        }
+    }
+
 #endif
 
-	return 0;
+
+#if defined(__APPLE__)
+
+    {
+        FILE *pipe;
+
+        char line[512];
+
+        pipe = popen(
+            "sysctl -n machdep.cpu.brand_string 2>/dev/null",
+            "r"
+        );
+
+        if (pipe)
+        {
+            if (fgets(
+                    line,
+                    sizeof(line),
+                    pipe
+                ))
+            {
+                line[strcspn(
+                    line,
+                    "\r\n"
+                )] = '\0';
+
+                if (line[0])
+                {
+                    snprintf(
+                        buffer,
+                        size,
+                        "%s",
+                        line
+                    );
+
+                    pclose(pipe);
+
+                    return;
+                }
+            }
+
+            pclose(pipe);
+        }
+    }
+
+#endif
+
+
+#if defined(__linux__)
+
+    {
+        FILE *file;
+
+        char line[512];
+
+        file = fopen(
+            "/proc/cpuinfo",
+            "r"
+        );
+
+        if (file)
+        {
+            while (fgets(
+                       line,
+                       sizeof(line),
+                       file
+                   ))
+            {
+                if (
+                    strncmp(
+                        line,
+                        "model name",
+                        10
+                    ) == 0 ||
+                    strncmp(
+                        line,
+                        "Hardware",
+                        8
+                    ) == 0 ||
+                    strncmp(
+                        line,
+                        "Model",
+                        5
+                    ) == 0
+                )
+                {
+                    char *colon =
+                        strchr(
+                            line,
+                            ':'
+                        );
+
+                    if (colon)
+                    {
+                        char *name =
+                            colon + 1;
+
+                        while (
+                            *name == ' ' ||
+                            *name == '\t'
+                        )
+                        {
+                            name++;
+                        }
+
+                        name[strcspn(
+                            name,
+                            "\r\n"
+                        )] = '\0';
+
+                        if (name[0])
+                        {
+                            snprintf(
+                                buffer,
+                                size,
+                                "%s",
+                                name
+                            );
+
+                            fclose(file);
+
+                            return;
+                        }
+                    }
+                }
+            }
+
+            fclose(file);
+        }
+    }
+
+#endif
+
+
+    snprintf(
+        buffer,
+        size,
+        "Unknown CPU"
+    );
+}
+
+
+/* ============================================================================
+ * THREAD COUNT
+ * ========================================================================== */
+
+static unsigned int get_default_thread_count(void)
+{
+#ifdef _WIN32
+
+    SYSTEM_INFO info;
+
+    GetSystemInfo(&info);
+
+    if (info.dwNumberOfProcessors > 0)
+    {
+        return (unsigned int)
+            info.dwNumberOfProcessors;
+    }
+
+#elif defined(_SC_NPROCESSORS_ONLN)
+
+    long processors =
+        sysconf(
+            _SC_NPROCESSORS_ONLN
+        );
+
+    if (processors > 0)
+    {
+        return (unsigned int)processors;
+    }
+
+#endif
+
+    return DEFAULT_THREADS;
+}
+
+
+/* ============================================================================
+ * ALGORITHM DEFINITIONS
+ * ========================================================================== */
+
+static const benchmark_algorithm_t ALGORITHM_MWC = {
+    "YespowerMwc",
+    YESPOWER_1_0,
+    2048,
+    32,
+    (const uint8_t *)MWC_PERS,
+    sizeof(MWC_PERS) - 1
+};
+
+
+static const benchmark_algorithm_t ALGORITHM_ADVC = {
+    "YespowerAdvc",
+    YESPOWER_1_0,
+    2048,
+    32,
+    (const uint8_t *)ADVC_PERS,
+    sizeof(ADVC_PERS) - 1
+};
+
+
+static const benchmark_algorithm_t *get_algorithm(
+    const char *name
+)
+{
+    if (!name)
+        return NULL;
+
+
+    if (
+        strcmp(
+            name,
+            "YespowerMwc"
+        ) == 0 ||
+        strcmp(
+            name,
+            "mwc"
+        ) == 0 ||
+        strcmp(
+            name,
+            "MWC"
+        ) == 0
+    )
+    {
+        return &ALGORITHM_MWC;
+    }
+
+
+    if (
+        strcmp(
+            name,
+            "YespowerAdvc"
+        ) == 0 ||
+        strcmp(
+            name,
+            "advc"
+        ) == 0 ||
+        strcmp(
+            name,
+            "ADVC"
+        ) == 0
+    )
+    {
+        return &ALGORITHM_ADVC;
+    }
+
+
+    return NULL;
+}
+
+
+/* ============================================================================
+ * WORKER
+ * ========================================================================== */
+
+static THREAD_RETURN THREAD_CALL benchmark_worker(
+    void *argument
+)
+{
+    worker_argument_t *worker_argument =
+        (worker_argument_t *)argument;
+
+    benchmark_context_t *context =
+        worker_argument->context;
+
+    benchmark_thread_t *worker =
+        worker_argument->worker;
+
+    yespower_params_t params;
+
+    yespower_binary_t dst;
+
+    uint32_t counter = 0;
+
+
+    params.version =
+        context->algorithm->version;
+
+    params.N =
+        context->algorithm->N;
+
+    params.r =
+        context->algorithm->r;
+
+    params.pers =
+        context->algorithm->pers;
+
+    params.perslen =
+        context->algorithm->perslen;
+
+
+    /*
+     * Give every worker its own deterministic input.
+     *
+     * The last four bytes act as a changing nonce.
+     */
+    memset(
+        worker->src,
+        0,
+        sizeof(worker->src)
+    );
+
+
+    for (
+        unsigned int i = 0;
+        i < sizeof(worker->src);
+        i++
+    )
+    {
+        worker->src[i] =
+            (uint8_t)(
+                (i * 3) ^
+                (worker->thread_id * 17)
+            );
+    }
+
+
+    /*
+     * Start every worker with a different nonce.
+     */
+    counter =
+        worker->thread_id;
+
+
+    while (
+        atomic_load_explicit(
+            &context->running,
+            memory_order_relaxed
+        )
+    )
+    {
+        worker->src[76] =
+            (uint8_t)(
+                counter & 0xff
+            );
+
+        worker->src[77] =
+            (uint8_t)(
+                (counter >> 8) & 0xff
+            );
+
+        worker->src[78] =
+            (uint8_t)(
+                (counter >> 16) & 0xff
+            );
+
+        worker->src[79] =
+            (uint8_t)(
+                (counter >> 24) & 0xff
+            );
+
+
+        if (
+            yespower_tls(
+                worker->src,
+                sizeof(worker->src),
+                &params,
+                &dst
+            ) != 0
+        )
+        {
+            worker->failed = 1;
+
+            atomic_store_explicit(
+                &context->failed,
+                1,
+                memory_order_relaxed
+            );
+
+            atomic_store_explicit(
+                &context->running,
+                0,
+                memory_order_relaxed
+            );
+
+            break;
+        }
+
+
+        worker->hashes++;
+
+        counter++;
+    }
+
+
+#ifdef _WIN32
+
+    return 0;
+
+#else
+
+    return NULL;
+
+#endif
+}
+
+
+/* ============================================================================
+ * THREAD CREATION
+ * ========================================================================== */
+
+static int start_worker(
+    benchmark_thread_t *worker,
+    worker_argument_t *argument
+)
+{
+#ifdef _WIN32
+
+    worker->thread =
+        (HANDLE)_beginthreadex(
+            NULL,
+            0,
+            benchmark_worker,
+            argument,
+            0,
+            NULL
+        );
+
+    return
+        worker->thread != NULL
+            ? 0
+            : -1;
+
+#else
+
+    return pthread_create(
+        &worker->thread,
+        NULL,
+        benchmark_worker,
+        argument
+    );
+
+#endif
+}
+
+
+static void join_worker(
+    benchmark_thread_t *worker
+)
+{
+#ifdef _WIN32
+
+    WaitForSingleObject(
+        worker->thread,
+        INFINITE
+    );
+
+    CloseHandle(
+        worker->thread
+    );
+
+#else
+
+    pthread_join(
+        worker->thread,
+        NULL
+    );
+
+#endif
+}
+
+
+/* ============================================================================
+ * JSON ESCAPING
+ * ========================================================================== */
+
+static void json_write_string(
+    FILE *file,
+    const char *value
+)
+{
+    const unsigned char *p =
+        (const unsigned char *)value;
+
+
+    fputc(
+        '"',
+        file
+    );
+
+
+    while (*p)
+    {
+        switch (*p)
+        {
+            case '\\':
+
+                fputs(
+                    "\\\\",
+                    file
+                );
+
+                break;
+
+
+            case '"':
+
+                fputs(
+                    "\\\"",
+                    file
+                );
+
+                break;
+
+
+            case '\n':
+
+                fputs(
+                    "\\n",
+                    file
+                );
+
+                break;
+
+
+            case '\r':
+
+                fputs(
+                    "\\r",
+                    file
+                );
+
+                break;
+
+
+            case '\t':
+
+                fputs(
+                    "\\t",
+                    file
+                );
+
+                break;
+
+
+            default:
+
+                fputc(
+                    *p,
+                    file
+                );
+
+                break;
+        }
+
+        p++;
+    }
+
+
+    fputc(
+        '"',
+        file
+    );
+}
+
+
+/* ============================================================================
+ * TIMESTAMP
+ * ========================================================================== */
+
+static void get_timestamp(
+    char *buffer,
+    size_t size
+)
+{
+    time_t now =
+        time(NULL);
+
+    struct tm tm_value;
+
+
+#ifdef _WIN32
+
+    if (
+        gmtime_s(
+            &tm_value,
+            &now
+        ) != 0
+    )
+    {
+        snprintf(
+            buffer,
+            size,
+            "unknown"
+        );
+
+        return;
+    }
+
+#else
+
+    if (
+        gmtime_r(
+            &now,
+            &tm_value
+        ) == NULL
+    )
+    {
+        snprintf(
+            buffer,
+            size,
+            "unknown"
+        );
+
+        return;
+    }
+
+#endif
+
+
+    strftime(
+        buffer,
+        size,
+        "%Y-%m-%dT%H:%M:%SZ",
+        &tm_value
+    );
+}
+
+
+/* ============================================================================
+ * VERSION
+ * ========================================================================== */
+
+static const char *get_sugarmaker_version(void)
+{
+    /*
+     * Keep this in one place so it can be updated whenever
+     * the miner version changes.
+     */
+    return "1.0.0";
+}
+
+
+/* ============================================================================
+ * JSON OUTPUT
+ * ========================================================================== */
+
+static int write_user_json(
+    const char *filename,
+    const benchmark_context_t *context,
+    double hashrate_hps,
+    double per_thread_hps,
+    const char *cpu,
+    const char *architecture,
+    const char *os,
+    const char *timestamp
+)
+{
+    FILE *file;
+
+
+    file =
+        fopen(
+            filename,
+            "w"
+        );
+
+
+    if (!file)
+    {
+        fprintf(
+            stderr,
+            "Failed to create %s: %s\n",
+            filename,
+            strerror(errno)
+        );
+
+        return -1;
+    }
+
+
+    fprintf(
+        file,
+        "{\n"
+        "  \"schema_version\": 1,\n"
+        "  \"benchmark\": {\n"
+    );
+
+
+    fprintf(
+        file,
+        "    \"algorithm\": "
+    );
+
+    json_write_string(
+        file,
+        context->algorithm->name
+    );
+
+    fprintf(
+        file,
+        ",\n"
+    );
+
+
+    fprintf(
+        file,
+        "    \"cpu\": "
+    );
+
+    json_write_string(
+        file,
+        cpu
+    );
+
+    fprintf(
+        file,
+        ",\n"
+    );
+
+
+    fprintf(
+        file,
+        "    \"architecture\": "
+    );
+
+    json_write_string(
+        file,
+        architecture
+    );
+
+    fprintf(
+        file,
+        ",\n"
+    );
+
+
+    fprintf(
+        file,
+        "    \"os\": "
+    );
+
+    json_write_string(
+        file,
+        os
+    );
+
+    fprintf(
+        file,
+        ",\n"
+    );
+
+
+    fprintf(
+        file,
+        "    \"threads\": %u,\n",
+        context->threads
+    );
+
+
+    fprintf(
+        file,
+        "    \"hashrate_hps\": %.6f,\n",
+        hashrate_hps
+    );
+
+
+    fprintf(
+        file,
+        "    \"per_thread_hps\": %.6f,\n",
+        per_thread_hps
+    );
+
+
+    fprintf(
+        file,
+        "    \"duration_seconds\": %u,\n",
+        context->duration_seconds
+    );
+
+
+    fprintf(
+        file,
+        "    \"sugarmaker_version\": "
+    );
+
+    json_write_string(
+        file,
+        get_sugarmaker_version()
+    );
+
+    fprintf(
+        file,
+        ",\n"
+    );
+
+
+    fprintf(
+        file,
+        "    \"timestamp\": "
+    );
+
+    json_write_string(
+        file,
+        timestamp
+    );
+
+
+    fprintf(
+        file,
+        "\n"
+        "  }\n"
+        "}\n"
+    );
+
+
+    if (
+        fclose(file) != 0
+    )
+    {
+        fprintf(
+            stderr,
+            "Failed to finalize %s.\n",
+            filename
+        );
+
+        return -1;
+    }
+
+
+    return 0;
+}
+
+
+/* ============================================================================
+ * BENCHMARK
+ * ========================================================================== */
+
+static int run_benchmark(
+    const benchmark_algorithm_t *algorithm,
+    unsigned int threads,
+    unsigned int duration_seconds,
+    const char *output_filename
+)
+{
+    benchmark_context_t context;
+
+    worker_argument_t *arguments;
+
+    uint64_t total_hashes = 0;
+
+    uint64_t start_time;
+
+    uint64_t end_time;
+
+    uint64_t deadline;
+
+    double elapsed_seconds;
+
+    double hashrate_hps;
+
+    double per_thread_hps;
+
+    char cpu[512];
+
+    char architecture[64];
+
+    char os[64];
+
+    char timestamp[64];
+
+    unsigned int i;
+
+
+    memset(
+        &context,
+        0,
+        sizeof(context)
+    );
+
+
+    context.algorithm =
+        algorithm;
+
+    context.threads =
+        threads;
+
+    context.duration_seconds =
+        duration_seconds;
+
+
+    atomic_init(
+        &context.running,
+        1
+    );
+
+    atomic_init(
+        &context.failed,
+        0
+    );
+
+
+    context.workers =
+        calloc(
+            threads,
+            sizeof(benchmark_thread_t)
+        );
+
+
+    if (!context.workers)
+    {
+        fprintf(
+            stderr,
+            "Failed to allocate benchmark workers.\n"
+        );
+
+        return 1;
+    }
+
+
+    arguments =
+        calloc(
+            threads,
+            sizeof(worker_argument_t)
+        );
+
+
+    if (!arguments)
+    {
+        fprintf(
+            stderr,
+            "Failed to allocate worker arguments.\n"
+        );
+
+        free(
+            context.workers
+        );
+
+        return 1;
+    }
+
+
+    printf("\n");
+    printf("============================================================\n");
+    printf("Sugarmaker CPU Benchmark\n");
+    printf("============================================================\n");
+    printf(
+        "Algorithm : %s\n",
+        algorithm->name
+    );
+    printf(
+        "Yespower  : %.1f\n",
+        algorithm->version * 0.1
+    );
+    printf(
+        "N         : %u\n",
+        algorithm->N
+    );
+    printf(
+        "r         : %u\n",
+        algorithm->r
+    );
+    printf(
+        "Threads   : %u\n",
+        threads
+    );
+    printf(
+        "Duration  : %u seconds\n",
+        duration_seconds
+    );
+    printf("============================================================\n");
+    printf("\n");
+
+
+    /*
+     * Start timing BEFORE workers are created.
+     */
+    start_time =
+        current_time_us();
+
+
+    if (start_time == 0)
+    {
+        fprintf(
+            stderr,
+            "Failed to obtain benchmark start time.\n"
+        );
+
+        free(arguments);
+        free(context.workers);
+
+        return 1;
+    }
+
+
+    context.start_time_us =
+        start_time;
+
+
+    /*
+     * Calculate the exact benchmark deadline.
+     */
+    deadline =
+        start_time +
+        ((uint64_t)duration_seconds * 1000000ULL);
+
+
+    /*
+     * Create workers.
+     */
+    for (
+        i = 0;
+        i < threads;
+        i++
+    )
+    {
+        context.workers[i].thread_id =
+            i;
+
+        context.workers[i].hashes =
+            0;
+
+        context.workers[i].failed =
+            0;
+
+
+        arguments[i].context =
+            &context;
+
+        arguments[i].worker =
+            &context.workers[i];
+
+
+        if (
+            start_worker(
+                &context.workers[i],
+                &arguments[i]
+            ) != 0
+        )
+        {
+            fprintf(
+                stderr,
+                "Failed to create benchmark thread %u.\n",
+                i
+            );
+
+
+            atomic_store_explicit(
+                &context.running,
+                0,
+                memory_order_relaxed
+            );
+
+
+            for (
+                unsigned int j = 0;
+                j < i;
+                j++
+            )
+            {
+                join_worker(
+                    &context.workers[j]
+                );
+            }
+
+
+            free(arguments);
+            free(context.workers);
+
+            return 1;
+        }
+    }
+
+
+    printf(
+        "Benchmark running for %u seconds...\n",
+        duration_seconds
+    );
+
+
+    /*
+     * Display progress while the workers perform hashes.
+     */
+    for (
+        unsigned int second = 0;
+        second < duration_seconds;
+        second++
+    )
+    {
+        uint64_t now;
+
+        unsigned int remaining_ms =
+            1000;
+
+
+        while (remaining_ms > 0)
+        {
+            now =
+                current_time_us();
+
+
+            if (
+                now >= deadline ||
+                !atomic_load_explicit(
+                    &context.running,
+                    memory_order_relaxed
+                )
+            )
+            {
+                remaining_ms = 0;
+                break;
+            }
+
+
+            sleep_milliseconds(100);
+
+
+            if (remaining_ms >= 100)
+                remaining_ms -= 100;
+            else
+                remaining_ms = 0;
+        }
+
+
+        if (
+            !atomic_load_explicit(
+                &context.running,
+                memory_order_relaxed
+            )
+        )
+        {
+            break;
+        }
+
+
+        printf(
+            "\rElapsed: %u/%u seconds",
+            second + 1,
+            duration_seconds
+        );
+
+        fflush(stdout);
+    }
+
+
+    /*
+     * Stop all workers.
+     */
+    atomic_store_explicit(
+        &context.running,
+        0,
+        memory_order_relaxed
+    );
+
+
+    printf("\n");
+
+
+    /*
+     * Wait for all workers.
+     */
+    for (
+        i = 0;
+        i < threads;
+        i++
+    )
+    {
+        join_worker(
+            &context.workers[i]
+        );
+    }
+
+
+    end_time =
+        current_time_us();
+
+
+    context.end_time_us =
+        end_time;
+
+
+    if (
+        atomic_load_explicit(
+            &context.failed,
+            memory_order_relaxed
+        )
+    )
+    {
+        fprintf(
+            stderr,
+            "Benchmark failed because a worker encountered an error.\n"
+        );
+
+        free(arguments);
+        free(context.workers);
+
+        return 1;
+    }
+
+
+    /*
+     * Count total hashes.
+     */
+    for (
+        i = 0;
+        i < threads;
+        i++
+    )
+    {
+        total_hashes +=
+            context.workers[i].hashes;
+    }
+
+
+    if (
+        end_time <= start_time
+    )
+    {
+        fprintf(
+            stderr,
+            "Invalid benchmark timing.\n"
+        );
+
+        free(arguments);
+        free(context.workers);
+
+        return 1;
+    }
+
+
+    elapsed_seconds =
+        (double)(
+            end_time - start_time
+        ) / 1000000.0;
+
+
+    hashrate_hps =
+        (double)total_hashes /
+        elapsed_seconds;
+
+
+    per_thread_hps =
+        hashrate_hps /
+        (double)threads;
+
+
+    get_cpu_name(
+        cpu,
+        sizeof(cpu)
+    );
+
+
+    get_architecture(
+        architecture,
+        sizeof(architecture)
+    );
+
+
+    get_os_name(
+        os,
+        sizeof(os)
+    );
+
+
+    get_timestamp(
+        timestamp,
+        sizeof(timestamp)
+    );
+
+
+    printf("\n");
+    printf("============================================================\n");
+    printf("Benchmark Complete\n");
+    printf("============================================================\n");
+
+
+    printf(
+        "CPU       : %s\n",
+        cpu
+    );
+
+
+    printf(
+        "OS        : %s\n",
+        os
+    );
+
+
+    printf(
+        "Arch      : %s\n",
+        architecture
+    );
+
+
+    printf(
+        "Threads   : %u\n",
+        threads
+    );
+
+
+    printf(
+        "Hashes    : %llu\n",
+        (unsigned long long)total_hashes
+    );
+
+
+    printf(
+        "Time      : %.3f seconds\n",
+        elapsed_seconds
+    );
+
+
+    printf(
+        "Hashrate  : %.3f H/s\n",
+        hashrate_hps
+    );
+
+
+    printf(
+        "Per Thread: %.3f H/s\n",
+        per_thread_hps
+    );
+
+
+    printf(
+        "============================================================\n"
+    );
+
+
+    /*
+     * Machine-readable output for the Tauri Agent.
+     */
+    printf(
+        "\n"
+        "BENCHMARK_RESULT "
+        "algo=%s "
+        "threads=%u "
+        "hashrate_hps=%.6f "
+        "per_thread_hps=%.6f "
+        "duration_seconds=%u\n",
+        algorithm->name,
+        threads,
+        hashrate_hps,
+        per_thread_hps,
+        duration_seconds
+    );
+
+
+    /*
+     * Create the user's JSON result.
+     */
+    if (
+        write_user_json(
+            output_filename,
+            &context,
+            hashrate_hps,
+            per_thread_hps,
+            cpu,
+            architecture,
+            os,
+            timestamp
+        ) != 0
+    )
+    {
+        fprintf(
+            stderr,
+            "Warning: benchmark completed but JSON could not be written.\n"
+        );
+    }
+    else
+    {
+        printf(
+            "\nUser benchmark result saved to:\n"
+            "  %s\n",
+            output_filename
+        );
+    }
+
+
+    free(arguments);
+
+    free(context.workers);
+
+    return 0;
+}
+
+
+/* ============================================================================
+ * SLEEP
+ * ========================================================================== */
+
+static void sleep_milliseconds(
+    unsigned int milliseconds
+);
+
+
+/* ============================================================================
+ * HELP
+ * ========================================================================== */
+
+static void print_help(
+    const char *program
+)
+{
+    printf(
+        "\n"
+        "Sugarmaker CPU Benchmark\n"
+        "\n"
+        "Usage:\n"
+        "  %s --algo <algorithm> --threads <threads> "
+        "--duration <seconds> [--output <file>]\n"
+        "\n"
+        "Algorithms:\n"
+        "  YespowerMwc\n"
+        "  YespowerAdvc\n"
+        "\n"
+        "Options:\n"
+        "  --algo       Algorithm to benchmark\n"
+        "  --threads    Number of CPU threads\n"
+        "  --duration   Benchmark duration in seconds\n"
+        "  --output     Output JSON filename\n"
+        "  --help       Show this help message\n"
+        "\n"
+        "Examples:\n"
+        "  %s --algo YespowerMwc --threads 4 --duration 30\n"
+        "  %s --algo YespowerAdvc --threads 8 --duration 60\n"
+        "  %s --algo YespowerMwc --threads 16 --duration 60 "
+        "--output my-benchmark.json\n"
+        "\n",
+        program,
+        program,
+        program,
+        program
+    );
+}
+
+
+/* ============================================================================
+ * MAIN
+ * ========================================================================== */
+
+int main(
+    int argc,
+    char **argv
+)
+{
+    const char *algorithm_name =
+        NULL;
+
+    const char *output_filename =
+        BENCHMARK_RESULT_FILE;
+
+    unsigned int threads =
+        get_default_thread_count();
+
+    unsigned int duration_seconds =
+        DEFAULT_DURATION;
+
+    const benchmark_algorithm_t *algorithm;
+
+
+    /*
+     * Parse command line.
+     */
+    for (
+        int i = 1;
+        i < argc;
+        i++
+    )
+    {
+        /*
+         * Help.
+         */
+        if (
+            strcmp(
+                argv[i],
+                "--help"
+            ) == 0 ||
+            strcmp(
+                argv[i],
+                "-h"
+            ) == 0
+        )
+        {
+            print_help(
+                argv[0]
+            );
+
+            return 0;
+        }
+
+
+        /*
+         * Algorithm.
+         */
+        if (
+            strcmp(
+                argv[i],
+                "--algo"
+            ) == 0
+        )
+        {
+            if (
+                i + 1 >= argc
+            )
+            {
+                fprintf(
+                    stderr,
+                    "--algo requires a value.\n"
+                );
+
+                return 1;
+            }
+
+
+            algorithm_name =
+                argv[++i];
+
+            continue;
+        }
+
+
+        /*
+         * Threads.
+         */
+        if (
+            strcmp(
+                argv[i],
+                "--threads"
+            ) == 0
+        )
+        {
+            long value;
+
+
+            if (
+                i + 1 >= argc
+            )
+            {
+                fprintf(
+                    stderr,
+                    "--threads requires a value.\n"
+                );
+
+                return 1;
+            }
+
+
+            value =
+                strtol(
+                    argv[++i],
+                    NULL,
+                    10
+                );
+
+
+            if (
+                value < 1 ||
+                value > 4096
+            )
+            {
+                fprintf(
+                    stderr,
+                    "Invalid thread count.\n"
+                );
+
+                return 1;
+            }
+
+
+            threads =
+                (unsigned int)value;
+
+            continue;
+        }
+
+
+        /*
+         * Duration.
+         */
+        if (
+            strcmp(
+                argv[i],
+                "--duration"
+            ) == 0
+        )
+        {
+            long value;
+
+
+            if (
+                i + 1 >= argc
+            )
+            {
+                fprintf(
+                    stderr,
+                    "--duration requires a value.\n"
+                );
+
+                return 1;
+            }
+
+
+            value =
+                strtol(
+                    argv[++i],
+                    NULL,
+                    10
+                );
+
+
+            if (
+                value < 1 ||
+                value > 86400
+            )
+            {
+                fprintf(
+                    stderr,
+                    "Invalid benchmark duration.\n"
+                );
+
+                return 1;
+            }
+
+
+            duration_seconds =
+                (unsigned int)value;
+
+            continue;
+        }
+
+
+        /*
+         * Output filename.
+         */
+        if (
+            strcmp(
+                argv[i],
+                "--output"
+            ) == 0
+        )
+        {
+            if (
+                i + 1 >= argc
+            )
+            {
+                fprintf(
+                    stderr,
+                    "--output requires a filename.\n"
+                );
+
+                return 1;
+            }
+
+
+            output_filename =
+                argv[++i];
+
+            continue;
+        }
+
+
+        /*
+         * Unknown argument.
+         */
+        fprintf(
+            stderr,
+            "Unknown argument: %s\n",
+            argv[i]
+        );
+
+
+        print_help(
+            argv[0]
+        );
+
+
+        return 1;
+    }
+
+
+    /*
+     * Default algorithm.
+     */
+    if (!algorithm_name)
+        algorithm_name =
+            "YespowerMwc";
+
+
+    algorithm =
+        get_algorithm(
+            algorithm_name
+        );
+
+
+    if (!algorithm)
+    {
+        fprintf(
+            stderr,
+            "Unknown algorithm: %s\n",
+            algorithm_name
+        );
+
+        fprintf(
+            stderr,
+            "Supported algorithms:\n"
+            "  YespowerMwc\n"
+            "  YespowerAdvc\n"
+        );
+
+        return 1;
+    }
+
+
+    if (
+        !output_filename ||
+        !output_filename[0]
+    )
+    {
+        output_filename =
+            BENCHMARK_RESULT_FILE;
+    }
+
+
+    return run_benchmark(
+        algorithm,
+        threads,
+        duration_seconds,
+        output_filename
+    );
+}
+
+
+/* ============================================================================
+ * SLEEP IMPLEMENTATION
+ * ========================================================================== */
+
+static void sleep_milliseconds(
+    unsigned int milliseconds
+)
+{
+#ifdef _WIN32
+
+    Sleep(
+        milliseconds
+    );
+
+#else
+
+    struct timespec request;
+
+    request.tv_sec =
+        milliseconds / 1000;
+
+    request.tv_nsec =
+        (long)(
+            milliseconds % 1000
+        ) * 1000000L;
+
+
+    while (
+        nanosleep(
+            &request,
+            &request
+        ) != 0
+    )
+    {
+        if (
+            errno != EINTR
+        )
+        {
+            break;
+        }
+    }
+
+#endif
 }
