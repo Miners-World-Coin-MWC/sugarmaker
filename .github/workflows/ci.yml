@@ -731,7 +731,7 @@ jobs:
             -pthread \
             -I. \
             -Iyespower-1.0.1 \
-            benchmark.c \
+            yespower-1.0.1/benchmark.c \
             yespower-1.0.1/yespower-opt.c \
             yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
@@ -778,7 +778,7 @@ jobs:
             -arch "${BENCH_ARCH}" \
             -I. \
             -Iyespower-1.0.1 \
-            benchmark.c \
+            yespower-1.0.1/benchmark.c \
             yespower-1.0.1/yespower-opt.c \
             yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
@@ -836,7 +836,7 @@ jobs:
             ${BENCH_CFLAGS} \
             -I. \
             -Iyespower-1.0.1 \
-            benchmark.c \
+            yespower-1.0.1/benchmark.c \
             yespower-1.0.1/yespower-opt.c \
             yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
