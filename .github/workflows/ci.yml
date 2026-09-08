@@ -694,12 +694,14 @@ jobs:
 
 
       # ======================================================================
-      # BUILD BENCHMARK BINARY
+      # BUILD BENCHMARK BINARY - LINUX
       #
-      # The benchmark executable is only required by GUI builds.
+      # This is GUI-gated so Linux builds can become GUI builds later without
+      # changing the benchmark implementation.
       #
-      # It is deliberately kept separate from the normal miner binary so
-      # dist/miner does not receive the benchmark executable.
+      # IMPORTANT:
+      # The complete Yespower implementation is linked here.
+      # yespower.c is required and must NOT be omitted.
       # ======================================================================
 
       - name: Build Sugarmaker Benchmark - Linux
@@ -713,25 +715,56 @@ jobs:
           echo "============================================================"
           echo "Building Sugarmaker CPU Benchmark"
           echo "Target: ${{ matrix.name }}"
+          echo "Architecture: ${{ matrix.arch }}"
           echo "============================================================"
 
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            CC_BIN="gcc"
-          elif [ "${{ matrix.arch }}" = "aarch64" ]; then
-            CC_BIN="gcc"
-          else
-            echo "Unsupported Linux benchmark architecture: ${{ matrix.arch }}"
-            exit 1
-          fi
+          case "${{ matrix.arch }}" in
+
+            x86_64)
+              CC_BIN="gcc"
+              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread"
+              ;;
+
+            i686)
+              CC_BIN="gcc"
+              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -m32"
+              ;;
+
+            armv7l)
+              CC_BIN="arm-linux-gnueabihf-gcc"
+              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+              ;;
+
+            aarch64)
+              if [ "${{ matrix.native }}" = "true" ]; then
+                CC_BIN="gcc"
+                BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=armv8-a"
+              else
+                CC_BIN="aarch64-linux-gnu-gcc"
+                BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=armv8-a"
+              fi
+              ;;
+
+            riscv64)
+              CC_BIN="riscv64-linux-gnu-gcc"
+              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=rv64gc -mabi=lp64d"
+              ;;
+
+            *)
+              echo "Unsupported Linux benchmark architecture: ${{ matrix.arch }}"
+              exit 1
+              ;;
+          esac
+
+          echo "Compiler: ${CC_BIN}"
+          echo "Flags: ${BENCH_CFLAGS}"
 
           "${CC_BIN}" \
-            -O3 \
-            -DNDEBUG \
-            -std=c11 \
-            -pthread \
+            ${BENCH_CFLAGS} \
             -I. \
             -Iyespower-1.0.1 \
             yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower.c \
             yespower-1.0.1/yespower-opt.c \
             yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
@@ -739,6 +772,7 @@ jobs:
 
           chmod +x build-benchmark/sugarmaker-benchmark
 
+          echo ""
           echo "============================================================"
           echo "Benchmark binary built successfully"
           echo "============================================================"
@@ -749,6 +783,8 @@ jobs:
 
       # ======================================================================
       # BUILD BENCHMARK BINARY - MACOS
+      #
+      # Builds natively for Intel and Apple Silicon.
       # ======================================================================
 
       - name: Build Sugarmaker Benchmark - macOS
@@ -762,6 +798,7 @@ jobs:
           echo "============================================================"
           echo "Building Sugarmaker CPU Benchmark"
           echo "Target: ${{ matrix.name }}"
+          echo "Architecture: ${{ matrix.arch }}"
           echo "============================================================"
 
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
@@ -779,6 +816,7 @@ jobs:
             -I. \
             -Iyespower-1.0.1 \
             yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower.c \
             yespower-1.0.1/yespower-opt.c \
             yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
@@ -786,6 +824,7 @@ jobs:
 
           chmod +x build-benchmark/sugarmaker-benchmark
 
+          echo ""
           echo "============================================================"
           echo "Benchmark binary built successfully"
           echo "============================================================"
@@ -796,6 +835,14 @@ jobs:
 
       # ======================================================================
       # BUILD BENCHMARK BINARY - WINDOWS
+      #
+      # x86_64:
+      #   Native MSYS2 MINGW64 compiler
+      #
+      # ARM64:
+      #   Native MSYS2 CLANGARM64 compiler
+      #
+      # The benchmark is deliberately independent from curl/OpenSSL.
       # ======================================================================
 
       - name: Build Sugarmaker Benchmark - Windows
@@ -809,17 +856,29 @@ jobs:
           echo "============================================================"
           echo "Building Sugarmaker CPU Benchmark"
           echo "Target: ${{ matrix.name }}"
+          echo "Architecture: ${{ matrix.arch }}"
           echo "============================================================"
 
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
 
             CC_BIN="gcc"
-            BENCH_CFLAGS=""
+
+            BENCH_CFLAGS="\
+              -O3 \
+              -DNDEBUG \
+              -std=c11 \
+              -pthread"
 
           elif [ "${{ matrix.arch }}" = "arm64" ]; then
 
             CC_BIN="clang"
-            BENCH_CFLAGS="--target=aarch64-w64-windows-gnu"
+
+            BENCH_CFLAGS="\
+              -O3 \
+              -DNDEBUG \
+              -std=c11 \
+              -pthread \
+              --target=aarch64-w64-windows-gnu"
 
           else
 
@@ -828,20 +887,21 @@ jobs:
 
           fi
 
+          echo "Compiler: ${CC_BIN}"
+          echo "Flags: ${BENCH_CFLAGS}"
+
           "${CC_BIN}" \
-            -O3 \
-            -DNDEBUG \
-            -std=c11 \
-            -pthread \
             ${BENCH_CFLAGS} \
             -I. \
             -Iyespower-1.0.1 \
             yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower.c \
             yespower-1.0.1/yespower-opt.c \
             yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
             -o build-benchmark/sugarmaker-benchmark.exe
 
+          echo ""
           echo "============================================================"
           echo "Benchmark binary built successfully"
           echo "============================================================"
@@ -925,10 +985,7 @@ jobs:
 
 
       # ======================================================================
-      # WINDOWS BENCHMARK RUNTIME
-      #
-      # The benchmark executable is built statically enough that it does not
-      # depend on the miner's curl/OpenSSL runtime.
+      # VERIFY WINDOWS BENCHMARK BINARY
       # ======================================================================
 
       - name: Verify Windows benchmark binary
@@ -945,6 +1002,49 @@ jobs:
 
           file build-benchmark/sugarmaker-benchmark.exe
           ls -lh build-benchmark/sugarmaker-benchmark.exe
+
+
+      # ======================================================================
+      # VERIFY MACOS BENCHMARK BINARY
+      # ======================================================================
+
+      - name: Verify macOS benchmark binary
+        if: matrix.gui == true && matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -e
+
+          test -f build-benchmark/sugarmaker-benchmark
+
+          echo "============================================================"
+          echo "macOS benchmark executable:"
+          echo "============================================================"
+
+          file build-benchmark/sugarmaker-benchmark
+          ls -lh build-benchmark/sugarmaker-benchmark
+
+
+      # ======================================================================
+      # VERIFY LINUX BENCHMARK BINARY
+      #
+      # This step is dormant while Linux GUI=false, but becomes active
+      # automatically when a Linux target is promoted to GUI=true.
+      # ======================================================================
+
+      - name: Verify Linux benchmark binary
+        if: matrix.gui == true && matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -e
+
+          test -f build-benchmark/sugarmaker-benchmark
+
+          echo "============================================================"
+          echo "Linux benchmark executable:"
+          echo "============================================================"
+
+          file build-benchmark/sugarmaker-benchmark
+          ls -lh build-benchmark/sugarmaker-benchmark
 
 
       # ======================================================================
@@ -977,15 +1077,15 @@ jobs:
           echo "Preparing complete miner runtime for GUI"
           echo "============================================================"
 
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Normal miner
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
 
           cp -r build-miner/* "$RESOURCE_DIR/"
 
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Benchmark executable
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
 
           if [ "${{ matrix.platform }}" = "windows" ]; then
 
@@ -1007,12 +1107,15 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Make native Unix miner executable.
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
 
-          if [ "${{ matrix.platform }}" != "windows" ] && [ "${{ matrix.platform }}" != "win32-cross" ]; then
+          if [ "${{ matrix.platform }}" != "windows" ] && \
+             [ "${{ matrix.platform }}" != "win32-cross" ]; then
+
             chmod +x "$RESOURCE_DIR/sugarmaker"
+
           fi
 
           echo ""
@@ -1024,7 +1127,7 @@ jobs:
 
 
       # ======================================================================
-      # VERIFY BENCHMARK RESOURCE
+      # VERIFY TAURI BENCHMARK RESOURCE
       # ======================================================================
 
       - name: Verify GUI benchmark resource
@@ -1033,13 +1136,24 @@ jobs:
         run: |
           set -e
 
+          RESOURCE_DIR="gui/agent/src-tauri/binaries"
+
           if [ "${{ matrix.platform }}" = "windows" ]; then
-            test -f "gui/agent/src-tauri/binaries/sugarmaker-benchmark.exe"
+
+            test -f "$RESOURCE_DIR/sugarmaker-benchmark.exe"
+
           else
-            test -f "gui/agent/src-tauri/binaries/sugarmaker-benchmark"
+
+            test -f "$RESOURCE_DIR/sugarmaker-benchmark"
+
           fi
 
-          echo "Benchmark resource is ready for Tauri."
+          echo ""
+          echo "============================================================"
+          echo "Tauri benchmark resource is ready."
+          echo "============================================================"
+
+          ls -lh "$RESOURCE_DIR"
 
 
       # ======================================================================
@@ -1103,7 +1217,7 @@ jobs:
           set -e
 
           echo "============================================================"
-          echo "Building Sugarmaker Dashboard GUI"
+          echo "Building Sugarmaker Dashboard"
           echo "Target: ${{ matrix.name }}"
           echo "Rust:   ${{ matrix.rust_target }}"
           echo "============================================================"
@@ -1123,34 +1237,33 @@ jobs:
         run: |
           set -e
 
-          # --------------------------------------------------------------
-          # The uploaded artifact contains ONLY:
+          # ------------------------------------------------------------------
+          # Uploaded artifact layout:
           #
           # dist/
           # ├── miner/
           # ├── agent/
           # └── dashboard/
           #
-          # GUI directories are only created for GUI-enabled targets.
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
 
           rm -rf dist
 
           mkdir -p dist/miner
 
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Miner
           #
           # IMPORTANT:
-          # The benchmark executable is NOT copied here.
-          # It is an Agent-only resource.
-          # --------------------------------------------------------------
+          # Benchmark executable is intentionally NOT copied here.
+          # It is an Agent-only runtime component.
+          # ------------------------------------------------------------------
 
           cp -r build-miner/* dist/miner/
 
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Agent GUI
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
 
           if [ "${{ matrix.gui }}" = "true" ]; then
 
@@ -1168,9 +1281,9 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Dashboard GUI
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
 
           if [ "${{ matrix.gui }}" = "true" ]; then
 
@@ -1188,9 +1301,9 @@ jobs:
 
           fi
 
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
           # Build information
-          # --------------------------------------------------------------
+          # ------------------------------------------------------------------
 
           cat > dist/BUILD-INFO.txt <<EOF
           Sugarmaker Build
@@ -1217,15 +1330,19 @@ jobs:
           EOF
 
           if [ "${{ matrix.gui }}" = "true" ]; then
+
             cat >> dist/BUILD-INFO.txt <<EOF
             - Sugarmaker Agent GUI
             - Sugarmaker CPU Benchmark
             - Sugarmaker Dashboard GUI
           EOF
+
           else
+
             cat >> dist/BUILD-INFO.txt <<EOF
             - GUI disabled for this target
           EOF
+
           fi
 
           echo "============================================================"
