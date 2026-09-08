@@ -1,35 +1,40 @@
-name: Sugarmaker CI + GUI
+name: Sugarmaker CI
 
 on:
   push:
-    paths-ignore:
-      - '**/*.md'
+    branches:
+      - "**"
 
   pull_request:
-    paths-ignore:
-      - 'doc/**'
-      - 'contrib/**'
-      - '**/*.md'
 
   workflow_dispatch:
 
+
+# ============================================================================
+# GLOBAL SETTINGS
+# ============================================================================
+
 env:
-  MAKEJOBS: "-j3"
+  MAKEJOBS: "-j$(nproc)"
+
+
+# ============================================================================
+# BUILD MATRIX
+# ============================================================================
 
 jobs:
 
-  # ========================================================================
-  # BUILD MINER + GUI FOR EVERY TARGET
-  # ========================================================================
-
   build:
+
     name: ${{ matrix.name }}
+
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
 
       matrix:
+
         include:
 
           # ==================================================================
@@ -41,8 +46,8 @@ jobs:
             platform: linux
             arch: x86_64
             native: true
-            rust_target: x86_64-unknown-linux-gnu
             gui: false
+            rust_target: x86_64-unknown-linux-gnu
 
           - name: i686-linux
             os: ubuntu-22.04
@@ -50,8 +55,8 @@ jobs:
             arch: i686
             native: false
             cross_host: i686-linux-gnu
-            rust_target: i686-unknown-linux-gnu
             gui: false
+            rust_target: i686-unknown-linux-gnu
 
           - name: armv7l-linux
             os: ubuntu-22.04
@@ -59,8 +64,8 @@ jobs:
             arch: armv7l
             native: false
             cross_host: arm-linux-gnueabihf
-            rust_target: armv7-unknown-linux-gnueabihf
             gui: false
+            rust_target: armv7-unknown-linux-gnueabihf
 
           - name: aarch64-linux
             os: ubuntu-22.04
@@ -68,16 +73,16 @@ jobs:
             arch: aarch64
             native: false
             cross_host: aarch64-linux-gnu
-            rust_target: aarch64-unknown-linux-gnu
             gui: false
+            rust_target: aarch64-unknown-linux-gnu
 
-          - name: aarch64-linux-native
+          - name: aarch64-native-linux
             os: ubuntu-24.04-arm
             platform: linux
             arch: aarch64
             native: true
-            rust_target: aarch64-unknown-linux-gnu
             gui: false
+            rust_target: aarch64-unknown-linux-gnu
 
           - name: riscv64-linux
             os: ubuntu-22.04
@@ -85,28 +90,30 @@ jobs:
             arch: riscv64
             native: false
             cross_host: riscv64-linux-gnu
-            rust_target: riscv64gc-unknown-linux-gnu
             gui: false
+            rust_target: riscv64gc-unknown-linux-gnu
+
 
           # ==================================================================
           # MACOS
           # ==================================================================
 
           - name: x86_64-macos
-            os: macos-15-intel
+            os: macos-13
             platform: macos
             arch: x86_64
-            host: x86_64-apple-darwin
-            rust_target: x86_64-apple-darwin
+            native: true
             gui: true
+            rust_target: x86_64-apple-darwin
 
           - name: arm64-macos
-            os: macos-latest
+            os: macos-14
             platform: macos
             arch: arm64
-            host: arm64-apple-darwin
-            rust_target: aarch64-apple-darwin
+            native: true
             gui: true
+            rust_target: aarch64-apple-darwin
+
 
           # ==================================================================
           # WINDOWS
@@ -116,28 +123,30 @@ jobs:
             os: windows-latest
             platform: windows
             arch: x86_64
-            native: true
             msystem: MINGW64
-            rust_target: x86_64-pc-windows-msvc
             gui: true
+            rust_target: x86_64-pc-windows-msvc
 
+          # 32-bit Windows is cross-compiled from Linux.
           - name: i686-win
             os: ubuntu-22.04
             platform: win32-cross
             arch: i686
-            native: false
-            rust_target: i686-pc-windows-gnu
             gui: false
+            rust_target: i686-pc-windows-gnu
 
           - name: arm64-win
             os: windows-11-arm
             platform: windows
             arch: arm64
-            native: true
             msystem: CLANGARM64
-            rust_target: aarch64-pc-windows-msvc
             gui: true
+            rust_target: aarch64-pc-windows-msvc
 
+
+    # ========================================================================
+    # STEPS
+    # ========================================================================
 
     steps:
 
@@ -150,32 +159,11 @@ jobs:
 
 
       # ======================================================================
-      # NODE
-      # ======================================================================
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-
-      # ======================================================================
-      # RUST
-      # ======================================================================
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
-
-
-      # ======================================================================
-      # LINUX NATIVE DEPENDENCIES
+      # LINUX - NATIVE DEPENDENCIES
       # ======================================================================
 
       - name: Install Linux native dependencies
         if: matrix.platform == 'linux' && matrix.native == true
-        shell: bash
         run: |
           set -e
 
@@ -190,17 +178,15 @@ jobs:
             libcurl4-openssl-dev \
             libjansson-dev \
             libssl-dev \
-            libgmp-dev \
-            patchelf
+            libgmp-dev
 
 
       # ======================================================================
-      # LINUX CROSS TOOLCHAINS
+      # LINUX - CROSS TOOLCHAINS
       # ======================================================================
 
       - name: Install Linux cross toolchain
         if: matrix.platform == 'linux' && matrix.native == false
-        shell: bash
         run: |
           set -e
 
@@ -209,7 +195,9 @@ jobs:
           case "${{ matrix.arch }}" in
 
             i686)
+
               sudo dpkg --add-architecture i386
+
               sudo apt-get update
 
               sudo apt-get install -y \
@@ -219,107 +207,87 @@ jobs:
                 pkg-config \
                 gcc-multilib \
                 g++-multilib \
-                libcurl4-openssl-dev:i386 \
-                patchelf
+                libcurl4-openssl-dev:i386
+
               ;;
 
+
             armv7l)
+
               sudo apt-get install -y \
                 autoconf \
                 automake \
                 libtool \
                 pkg-config \
                 gcc-arm-linux-gnueabihf \
-                g++-arm-linux-gnueabihf \
-                patchelf
+                g++-arm-linux-gnueabihf
+
               ;;
 
+
             aarch64)
+
               sudo apt-get install -y \
                 autoconf \
                 automake \
                 libtool \
                 pkg-config \
                 gcc-aarch64-linux-gnu \
-                g++-aarch64-linux-gnu \
-                patchelf
+                g++-aarch64-linux-gnu
+
               ;;
 
+
             riscv64)
+
               sudo apt-get install -y \
                 autoconf \
                 automake \
                 libtool \
                 pkg-config \
                 gcc-riscv64-linux-gnu \
-                g++-riscv64-linux-gnu \
-                patchelf
+                g++-riscv64-linux-gnu
+
               ;;
 
-            *)
-              echo "Unsupported architecture: ${{ matrix.arch }}"
-              exit 1
-              ;;
           esac
 
 
       # ======================================================================
-      # LINUX CROSS CURL
+      # BUILD STATIC LIBCURL FOR LINUX CROSS BUILDS
       # ======================================================================
 
       - name: Build static libcurl for Linux cross target
         if: matrix.platform == 'linux' && matrix.native == false && matrix.arch != 'i686'
-        shell: bash
         run: |
           set -e
 
           CURL_VERSION=8.19.0
           CURL_PACKAGE="curl-${CURL_VERSION}"
           CURL_PACKAGE_FILE="${CURL_PACKAGE}.tar.gz"
+
           CURL_PREFIX="${PWD}/curl-cross-${{ matrix.arch }}"
 
           case "${{ matrix.arch }}" in
 
             armv7l)
               HOST="arm-linux-gnueabihf"
-
               export CC="${HOST}-gcc"
-              export CXX="${HOST}-g++"
-              export AR="${HOST}-ar"
-              export RANLIB="${HOST}-ranlib"
-              export STRIP="${HOST}-strip"
-
-              export CFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
-              export CXXFLAGS="${CFLAGS}"
               ;;
 
             aarch64)
               HOST="aarch64-linux-gnu"
-
               export CC="${HOST}-gcc"
-              export CXX="${HOST}-g++"
-              export AR="${HOST}-ar"
-              export RANLIB="${HOST}-ranlib"
-              export STRIP="${HOST}-strip"
-
-              export CFLAGS="-march=armv8-a"
-              export CXXFLAGS="${CFLAGS}"
               ;;
 
             riscv64)
               HOST="riscv64-linux-gnu"
-
               export CC="${HOST}-gcc"
-              export CXX="${HOST}-g++"
-              export AR="${HOST}-ar"
-              export RANLIB="${HOST}-ranlib"
-              export STRIP="${HOST}-strip"
-
-              export CFLAGS="-march=rv64gc -mabi=lp64d"
-              export CXXFLAGS="${CFLAGS}"
               ;;
 
           esac
+
+          export CFLAGS="-D_GNU_SOURCE"
 
           wget -q \
             "https://curl.se/download/${CURL_PACKAGE_FILE}" \
@@ -365,6 +333,7 @@ jobs:
             --disable-unix-sockets
 
           make ${MAKEJOBS}
+
           make install
 
           cd ..
@@ -376,12 +345,11 @@ jobs:
 
 
       # ======================================================================
-      # BUILD MINER - LINUX NATIVE
+      # LINUX - NATIVE MINER
       # ======================================================================
 
       - name: Build Sugarmaker - Linux native
         if: matrix.platform == 'linux' && matrix.native == true
-        shell: bash
         run: |
           set -e
 
@@ -394,12 +362,11 @@ jobs:
 
 
       # ======================================================================
-      # BUILD MINER - LINUX CROSS
+      # LINUX - CROSS MINER
       # ======================================================================
 
       - name: Build Sugarmaker - Linux cross
         if: matrix.platform == 'linux' && matrix.native == false
-        shell: bash
         run: |
           set -e
 
@@ -407,11 +374,16 @@ jobs:
 
           HOST="${{ matrix.cross_host }}"
 
+          echo "============================================================"
+          echo "Cross compiling for ${HOST}"
+          echo "============================================================"
+
           export CC="${HOST}-gcc"
           export CXX="${HOST}-g++"
           export AR="${HOST}-ar"
           export RANLIB="${HOST}-ranlib"
           export STRIP="${HOST}-strip"
+
 
           if [ "${{ matrix.arch }}" = "i686" ]; then
 
@@ -437,32 +409,41 @@ jobs:
             make ${MAKEJOBS}
 
             exit 0
+
           fi
+
 
           case "${{ matrix.arch }}" in
 
             armv7l)
+
               export CFLAGS="-march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
               export CXXFLAGS="${CFLAGS}"
+
               ;;
+
 
             aarch64)
+
               export CFLAGS="-march=armv8-a"
               export CXXFLAGS="${CFLAGS}"
+
               ;;
 
+
             riscv64)
+
               export CFLAGS="-march=rv64gc -mabi=lp64d"
               export CXXFLAGS="${CFLAGS}"
+
               ;;
 
           esac
 
+
           ./configure \
             --host="${HOST}" \
-            --with-curl="${CURL_PREFIX}" \
-            CFLAGS="${CFLAGS}" \
-            CXXFLAGS="${CXXFLAGS}" \
+            --with-libcurl="${CURL_PREFIX}" \
             LDFLAGS="-static"
 
           make ${MAKEJOBS}
@@ -474,28 +455,28 @@ jobs:
 
       - name: Install macOS dependencies
         if: matrix.platform == 'macos'
-        shell: bash
         run: |
           set -e
 
+          brew update
+
           brew install \
-            automake \
             autoconf \
+            automake \
             libtool \
             pkg-config \
             curl \
             jansson \
             openssl \
-            gmp || true
+            gmp
 
 
       # ======================================================================
-      # BUILD MINER - MACOS
+      # MACOS MINER
       # ======================================================================
 
       - name: Build Sugarmaker - macOS
         if: matrix.platform == 'macos'
-        shell: bash
         run: |
           set -e
 
@@ -507,118 +488,21 @@ jobs:
           export LDFLAGS="-L${BREW_PREFIX}/lib"
 
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
+
             export CFLAGS="-arch x86_64"
             export CXXFLAGS="-arch x86_64"
-          else
+
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+
             export CFLAGS="-arch arm64"
             export CXXFLAGS="-arch arm64"
+
           fi
 
           ./configure \
-            --with-curl \
-            --host="${{ matrix.host }}"
+            --with-curl
 
           make ${MAKEJOBS}
-
-
-      # ======================================================================
-      # WINDOWS i686 CROSS TOOLCHAIN
-      # ======================================================================
-
-      - name: Install Windows i686 toolchain
-        if: matrix.platform == 'win32-cross'
-        shell: bash
-        run: |
-          set -e
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            gcc-mingw-w64-i686-posix \
-            g++-mingw-w64-i686-posix \
-            binutils-mingw-w64-i686 \
-            mingw-w64-i686-dev \
-            mingw-w64-common \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            build-essential \
-            git \
-            wget \
-            file \
-            nsis
-
-
-      # ======================================================================
-      # WINDOWS i686 DEPENDENCIES
-      # ======================================================================
-
-      - name: Build Windows i686 dependencies
-        if: matrix.platform == 'win32-cross'
-        shell: bash
-        run: |
-          set -e
-
-          cd depends/deps-win32
-
-          chmod +x build_win_x86_deps.sh
-          ./build_win_x86_deps.sh
-
-          cd ../..
-
-          echo "CURL_PREFIX=${PWD}/depends/deps-win32/i686-w64-mingw32" >> "$GITHUB_ENV"
-
-
-      # ======================================================================
-      # BUILD WINDOWS i686
-      # ======================================================================
-
-      - name: Build Sugarmaker - Windows i686
-        if: matrix.platform == 'win32-cross'
-        shell: bash
-        run: |
-          set -e
-
-          export HOST="i686-w64-mingw32"
-
-          export CC="i686-w64-mingw32-gcc-posix"
-          export CXX="i686-w64-mingw32-g++-posix"
-          export AR="i686-w64-mingw32-ar"
-          export RANLIB="i686-w64-mingw32-ranlib"
-          export STRIP="i686-w64-mingw32-strip"
-
-          CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
-
-          export CFLAGS="-Wall -O2 -fomit-frame-pointer -std=c99 -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
-          export CXXFLAGS="-Wall -O2 -fomit-frame-pointer -DWIN32 -D_WIN32_WINNT=0x0600 -DCURL_STATICLIB -DPTW32_STATIC_LIB"
-          export CPPFLAGS="-I${CURL_PREFIX}/include"
-          export LDFLAGS="-static -L${CURL_PREFIX}/lib"
-
-          ./autogen.sh || true
-
-          autoreconf -fi \
-            -I"${CURL_PREFIX}/share/aclocal"
-
-          export LIBS="-lcurl -lws2_32 -lcrypt32 -lsecur32 -lwldap32 -lbcrypt -liphlpapi -lwinpthread"
-
-          ./configure \
-            --build=x86_64-pc-linux-gnu \
-            --host="${HOST}" \
-            --with-curl="${CURL_PREFIX}" \
-            CPPFLAGS="${CPPFLAGS}" \
-            CFLAGS="${CFLAGS}" \
-            CXXFLAGS="${CXXFLAGS}" \
-            LDFLAGS="${LDFLAGS}" \
-            LIBS="${LIBS}"
-
-          make ${MAKEJOBS}
-
-          "${STRIP}" \
-            -p \
-            --strip-debug \
-            --strip-unneeded \
-            sugarmaker.exe
 
 
       # ======================================================================
@@ -631,6 +515,7 @@ jobs:
         with:
           update: true
           msystem: ${{ matrix.msystem }}
+
           install: >
             base-devel
             autoconf
@@ -676,7 +561,7 @@ jobs:
 
 
       # ======================================================================
-      # BUILD WINDOWS
+      # WINDOWS MINER
       # ======================================================================
 
       - name: Build Sugarmaker - Windows
@@ -694,220 +579,423 @@ jobs:
 
 
       # ======================================================================
-      # BUILD BENCHMARK BINARY - LINUX
-      #
-      # This is GUI-gated so Linux builds can become GUI builds later without
-      # changing the benchmark implementation.
+      # WINDOWS i686 CROSS BUILD
+      # ======================================================================
+
+      - name: Install Windows i686 cross toolchain
+        if: matrix.platform == 'win32-cross'
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            libtool \
+            pkg-config \
+            mingw-w64 \
+            gcc-mingw-w64-i686 \
+            g++-mingw-w64-i686 \
+            binutils-mingw-w64-i686
+
+
+      # ======================================================================
+      # WINDOWS i686 STATIC DEPENDENCIES
+      # ======================================================================
+
+      - name: Build Windows i686
+        if: matrix.platform == 'win32-cross'
+        shell: bash
+        run: |
+          set -e
+
+          echo "============================================================"
+          echo "Preparing Windows i686 build"
+          echo "============================================================"
+
+          HOST="i686-w64-mingw32"
+
+          export CC="${HOST}-gcc-posix"
+          export CXX="${HOST}-g++-posix"
+          export AR="${HOST}-ar"
+          export RANLIB="${HOST}-ranlib"
+          export STRIP="${HOST}-strip"
+
+          CURL_PREFIX="${PWD}/depends/deps-win32/i686-w64-mingw32"
+
+          export CPPFLAGS="-I${CURL_PREFIX}/include"
+
+          export CFLAGS="\
+          -Wall \
+          -O2 \
+          -fomit-frame-pointer \
+          -std=c99 \
+          -DWIN32 \
+          -D_WIN32_WINNT=0x0600 \
+          -DCURL_STATICLIB \
+          -DPTW32_STATIC_LIB"
+
+          export CXXFLAGS="\
+          -Wall \
+          -O2 \
+          -fomit-frame-pointer \
+          -DWIN32 \
+          -D_WIN32_WINNT=0x0600 \
+          -DCURL_STATICLIB \
+          -DPTW32_STATIC_LIB"
+
+          export LDFLAGS="\
+          -static \
+          -L${CURL_PREFIX}/lib"
+
+          export LIBS="\
+          -lcurl \
+          -lws2_32 \
+          -lcrypt32 \
+          -lsecur32 \
+          -lwldap32 \
+          -lbcrypt \
+          -liphlpapi"
+
+          echo "============================================================"
+          echo "Compiler configuration"
+          echo "============================================================"
+
+          echo "HOST=${HOST}"
+          echo "CC=${CC}"
+          echo "CXX=${CXX}"
+          echo "CURL_PREFIX=${CURL_PREFIX}"
+
+          test -f "${CURL_PREFIX}/lib/libcurl.a"
+          test -f "${CURL_PREFIX}/include/curl/curl.h"
+
+          ./autogen.sh || true
+
+          ./configure \
+            --build=x86_64-pc-linux-gnu \
+            --host="${HOST}" \
+            --with-curl="${CURL_PREFIX}" \
+            CPPFLAGS="${CPPFLAGS}" \
+            CFLAGS="${CFLAGS}" \
+            CXXFLAGS="${CXXFLAGS}" \
+            LDFLAGS="${LDFLAGS}" \
+            LIBS="${LIBS}"
+
+          make ${MAKEJOBS}
+
+          "${STRIP}" \
+            -p \
+            --strip-debug \
+            --strip-unneeded \
+            sugarmaker.exe
+
+
+      # ======================================================================
+      # ==============================================================
+      # CPU BENCHMARK BUILD
+      # ==============================================================
       #
       # IMPORTANT:
-      # The complete Yespower implementation is linked here.
-      # yespower.c is required and must NOT be omitted.
-      # ======================================================================
-
-      - name: Build Sugarmaker Benchmark - Linux
-        if: matrix.gui == true && matrix.platform == 'linux'
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p build-benchmark
-
-          echo "============================================================"
-          echo "Building Sugarmaker CPU Benchmark"
-          echo "Target: ${{ matrix.name }}"
-          echo "Architecture: ${{ matrix.arch }}"
-          echo "============================================================"
-
-          case "${{ matrix.arch }}" in
-
-            x86_64)
-              CC_BIN="gcc"
-              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread"
-              ;;
-
-            i686)
-              CC_BIN="gcc"
-              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -m32"
-              ;;
-
-            armv7l)
-              CC_BIN="arm-linux-gnueabihf-gcc"
-              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
-              ;;
-
-            aarch64)
-              if [ "${{ matrix.native }}" = "true" ]; then
-                CC_BIN="gcc"
-                BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=armv8-a"
-              else
-                CC_BIN="aarch64-linux-gnu-gcc"
-                BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=armv8-a"
-              fi
-              ;;
-
-            riscv64)
-              CC_BIN="riscv64-linux-gnu-gcc"
-              BENCH_CFLAGS="-O3 -DNDEBUG -std=c11 -pthread -march=rv64gc -mabi=lp64d"
-              ;;
-
-            *)
-              echo "Unsupported Linux benchmark architecture: ${{ matrix.arch }}"
-              exit 1
-              ;;
-          esac
-
-          echo "Compiler: ${CC_BIN}"
-          echo "Flags: ${BENCH_CFLAGS}"
-
-          "${CC_BIN}" \
-            ${BENCH_CFLAGS} \
-            -I. \
-            -Iyespower-1.0.1 \
-            yespower-1.0.1/benchmark.c \
-            yespower-1.0.1/yespower.c \
-            yespower-1.0.1/yespower-opt.c \
-            yespower-1.0.1/yespower-platform.c \
-            yespower-1.0.1/sha256.c \
-            -o build-benchmark/sugarmaker-benchmark
-
-          chmod +x build-benchmark/sugarmaker-benchmark
-
-          echo ""
-          echo "============================================================"
-          echo "Benchmark binary built successfully"
-          echo "============================================================"
-
-          file build-benchmark/sugarmaker-benchmark
-          ls -lh build-benchmark/sugarmaker-benchmark
-
-
-      # ======================================================================
-      # BUILD BENCHMARK BINARY - MACOS
       #
-      # Builds natively for Intel and Apple Silicon.
+      # There is NO yespower.c in this implementation.
+      #
+      # yespower-opt.c includes yespower-platform.c internally.
+      #
+      # Therefore we compile ONLY:
+      #
+      #   benchmark.c
+      #   yespower-opt.c
+      #   sha256.c
+      #
+      # Do NOT add yespower-platform.c as a separate source.
+      # Do NOT add yespower-ref.c.
+      #
       # ======================================================================
 
-      - name: Build Sugarmaker Benchmark - macOS
-        if: matrix.gui == true && matrix.platform == 'macos'
-        shell: bash
+
+      # ======================================================================
+      # BENCHMARK - LINUX x86_64
+      # ======================================================================
+
+      - name: Build benchmark - Linux x86_64
+        if: matrix.gui == true && matrix.platform == 'linux' && matrix.arch == 'x86_64'
         run: |
           set -e
 
           mkdir -p build-benchmark
 
-          echo "============================================================"
-          echo "Building Sugarmaker CPU Benchmark"
-          echo "Target: ${{ matrix.name }}"
-          echo "Architecture: ${{ matrix.arch }}"
-          echo "============================================================"
-
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            BENCH_ARCH="x86_64"
-          else
-            BENCH_ARCH="arm64"
-          fi
-
-          clang \
+          gcc \
             -O3 \
             -DNDEBUG \
             -std=c11 \
             -pthread \
-            -arch "${BENCH_ARCH}" \
             -I. \
             -Iyespower-1.0.1 \
             yespower-1.0.1/benchmark.c \
-            yespower-1.0.1/yespower.c \
             yespower-1.0.1/yespower-opt.c \
-            yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
             -o build-benchmark/sugarmaker-benchmark
 
           chmod +x build-benchmark/sugarmaker-benchmark
 
-          echo ""
-          echo "============================================================"
-          echo "Benchmark binary built successfully"
-          echo "============================================================"
+          file build-benchmark/sugarmaker-benchmark
+
+          ./build-benchmark/sugarmaker-benchmark \
+            --algo YespowerMwc \
+            --threads 1 \
+            --duration 1 \
+            --machine
+
+
+      # ======================================================================
+      # BENCHMARK - LINUX i686
+      # ======================================================================
+
+      - name: Build benchmark - Linux i686
+        if: matrix.gui == true && matrix.platform == 'linux' && matrix.arch == 'i686'
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          gcc \
+            -m32 \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark
+
+          chmod +x build-benchmark/sugarmaker-benchmark
 
           file build-benchmark/sugarmaker-benchmark
-          ls -lh build-benchmark/sugarmaker-benchmark
 
 
       # ======================================================================
-      # BUILD BENCHMARK BINARY - WINDOWS
-      #
-      # x86_64:
-      #   Native MSYS2 MINGW64 compiler
-      #
-      # ARM64:
-      #   Native MSYS2 CLANGARM64 compiler
-      #
-      # The benchmark is deliberately independent from curl/OpenSSL.
+      # BENCHMARK - LINUX ARMV7
       # ======================================================================
 
-      - name: Build Sugarmaker Benchmark - Windows
-        if: matrix.gui == true && matrix.platform == 'windows'
+      - name: Build benchmark - Linux armv7l
+        if: matrix.gui == true && matrix.platform == 'linux' && matrix.arch == 'armv7l'
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          arm-linux-gnueabihf-gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
+            -march=armv7-a \
+            -mfpu=vfpv3-d16 \
+            -mfloat-abi=hard \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark
+
+          file build-benchmark/sugarmaker-benchmark
+
+
+      # ======================================================================
+      # BENCHMARK - LINUX AARCH64
+      # ======================================================================
+
+      - name: Build benchmark - Linux aarch64
+        if: matrix.gui == true && matrix.platform == 'linux' && matrix.arch == 'aarch64'
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          aarch64-linux-gnu-gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
+            -march=armv8-a \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark
+
+          file build-benchmark/sugarmaker-benchmark
+
+
+      # ======================================================================
+      # BENCHMARK - LINUX RISCV64
+      # ======================================================================
+
+      - name: Build benchmark - Linux riscv64
+        if: matrix.gui == true && matrix.platform == 'linux' && matrix.arch == 'riscv64'
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          riscv64-linux-gnu-gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
+            -march=rv64gc \
+            -mabi=lp64d \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark
+
+          file build-benchmark/sugarmaker-benchmark
+
+
+      # ======================================================================
+      # BENCHMARK - MACOS INTEL
+      # ======================================================================
+
+      - name: Build benchmark - macOS x86_64
+        if: matrix.gui == true && matrix.platform == 'macos' && matrix.arch == 'x86_64'
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          clang \
+            -arch x86_64 \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark
+
+          chmod +x build-benchmark/sugarmaker-benchmark
+
+          file build-benchmark/sugarmaker-benchmark
+
+          ./build-benchmark/sugarmaker-benchmark \
+            --algo YespowerMwc \
+            --threads 1 \
+            --duration 1 \
+            --machine
+
+
+      # ======================================================================
+      # BENCHMARK - MACOS APPLE SILICON
+      # ======================================================================
+
+      - name: Build benchmark - macOS arm64
+        if: matrix.gui == true && matrix.platform == 'macos' && matrix.arch == 'arm64'
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          clang \
+            -arch arm64 \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark
+
+          chmod +x build-benchmark/sugarmaker-benchmark
+
+          file build-benchmark/sugarmaker-benchmark
+
+          ./build-benchmark/sugarmaker-benchmark \
+            --algo YespowerMwc \
+            --threads 1 \
+            --duration 1 \
+            --machine
+
+
+      # ======================================================================
+      # BENCHMARK - WINDOWS x86_64
+      # ======================================================================
+
+      - name: Build benchmark - Windows x86_64
+        if: matrix.gui == true && matrix.platform == 'windows' && matrix.arch == 'x86_64'
         shell: msys2 {0}
         run: |
           set -e
 
           mkdir -p build-benchmark
 
-          echo "============================================================"
-          echo "Building Sugarmaker CPU Benchmark"
-          echo "Target: ${{ matrix.name }}"
-          echo "Architecture: ${{ matrix.arch }}"
-          echo "============================================================"
-
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-
-            CC_BIN="gcc"
-
-            BENCH_CFLAGS="\
-              -O3 \
-              -DNDEBUG \
-              -std=c11 \
-              -pthread"
-
-          elif [ "${{ matrix.arch }}" = "arm64" ]; then
-
-            CC_BIN="clang"
-
-            BENCH_CFLAGS="\
-              -O3 \
-              -DNDEBUG \
-              -std=c11 \
-              -pthread \
-              --target=aarch64-w64-windows-gnu"
-
-          else
-
-            echo "Unsupported Windows benchmark architecture: ${{ matrix.arch }}"
-            exit 1
-
-          fi
-
-          echo "Compiler: ${CC_BIN}"
-          echo "Flags: ${BENCH_CFLAGS}"
-
-          "${CC_BIN}" \
-            ${BENCH_CFLAGS} \
+          gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
             -I. \
             -Iyespower-1.0.1 \
             yespower-1.0.1/benchmark.c \
-            yespower-1.0.1/yespower.c \
             yespower-1.0.1/yespower-opt.c \
-            yespower-1.0.1/yespower-platform.c \
             yespower-1.0.1/sha256.c \
             -o build-benchmark/sugarmaker-benchmark.exe
 
-          echo ""
-          echo "============================================================"
-          echo "Benchmark binary built successfully"
-          echo "============================================================"
+          file build-benchmark/sugarmaker-benchmark.exe
+
+          ./build-benchmark/sugarmaker-benchmark.exe \
+            --algo YespowerMwc \
+            --threads 1 \
+            --duration 1 \
+            --machine
+
+
+      # ======================================================================
+      # BENCHMARK - WINDOWS ARM64
+      # ======================================================================
+
+      - name: Build benchmark - Windows ARM64
+        if: matrix.gui == true && matrix.platform == 'windows' && matrix.arch == 'arm64'
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          clang \
+            --target=aarch64-w64-windows-gnu \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -pthread \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark.exe
 
           file build-benchmark/sugarmaker-benchmark.exe
-          ls -lh build-benchmark/sugarmaker-benchmark.exe
+
+          ./build-benchmark/sugarmaker-benchmark.exe \
+            --algo YespowerMwc \
+            --threads 1 \
+            --duration 1 \
+            --machine
 
 
       # ======================================================================
@@ -921,10 +1009,15 @@ jobs:
 
           mkdir -p build-miner
 
-          if [ "${{ matrix.platform }}" = "windows" ] || [ "${{ matrix.platform }}" = "win32-cross" ]; then
+          if [ "${{ matrix.platform }}" = "windows" ] || \
+             [ "${{ matrix.platform }}" = "win32-cross" ]; then
+
             cp sugarmaker.exe build-miner/sugarmaker.exe
+
           else
+
             cp sugarmaker build-miner/sugarmaker
+
           fi
 
           echo "============================================================"
@@ -974,77 +1067,68 @@ jobs:
             | awk '{print $3}' \
             | sort -u \
             | while read dll; do
+
                 [ -f "$dll" ] && cp "$dll" build-miner/
+
               done
 
           echo "============================================================"
-          echo "Bundled Windows runtime libraries:"
+          echo "Bundled Windows runtime libraries"
           echo "============================================================"
 
           ls -lh build-miner/
 
 
       # ======================================================================
-      # VERIFY WINDOWS BENCHMARK BINARY
+      # BENCHMARK RUNTIME DLLS - WINDOWS
       # ======================================================================
 
-      - name: Verify Windows benchmark binary
+      - name: Bundle benchmark Windows DLLs
         if: matrix.gui == true && matrix.platform == 'windows'
         shell: msys2 {0}
         run: |
           set -e
 
-          test -f build-benchmark/sugarmaker-benchmark.exe
+          if [ ! -f "build-benchmark/sugarmaker-benchmark.exe" ]; then
+            echo "ERROR: Benchmark executable was not created."
+            exit 1
+          fi
+
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+
+            DLL_DIR="/mingw64/bin"
+
+          elif [ "${{ matrix.arch }}" = "arm64" ]; then
+
+            DLL_DIR="/clangarm64/bin"
+
+          else
+
+            exit 0
+
+          fi
 
           echo "============================================================"
-          echo "Windows benchmark executable:"
+          echo "Benchmark runtime dependencies"
           echo "============================================================"
 
-          file build-benchmark/sugarmaker-benchmark.exe
-          ls -lh build-benchmark/sugarmaker-benchmark.exe
+          ldd build-benchmark/sugarmaker-benchmark.exe || true
 
+          ldd build-benchmark/sugarmaker-benchmark.exe \
+            | grep "$DLL_DIR" \
+            | awk '{print $3}' \
+            | sort -u \
+            | while read dll; do
 
-      # ======================================================================
-      # VERIFY MACOS BENCHMARK BINARY
-      # ======================================================================
+                [ -f "$dll" ] && cp "$dll" build-benchmark/
 
-      - name: Verify macOS benchmark binary
-        if: matrix.gui == true && matrix.platform == 'macos'
-        shell: bash
-        run: |
-          set -e
-
-          test -f build-benchmark/sugarmaker-benchmark
+              done
 
           echo "============================================================"
-          echo "macOS benchmark executable:"
+          echo "Benchmark files"
           echo "============================================================"
 
-          file build-benchmark/sugarmaker-benchmark
-          ls -lh build-benchmark/sugarmaker-benchmark
-
-
-      # ======================================================================
-      # VERIFY LINUX BENCHMARK BINARY
-      #
-      # This step is dormant while Linux GUI=false, but becomes active
-      # automatically when a Linux target is promoted to GUI=true.
-      # ======================================================================
-
-      - name: Verify Linux benchmark binary
-        if: matrix.gui == true && matrix.platform == 'linux'
-        shell: bash
-        run: |
-          set -e
-
-          test -f build-benchmark/sugarmaker-benchmark
-
-          echo "============================================================"
-          echo "Linux benchmark executable:"
-          echo "============================================================"
-
-          file build-benchmark/sugarmaker-benchmark
-          ls -lh build-benchmark/sugarmaker-benchmark
+          ls -lh build-benchmark/
 
 
       # ======================================================================
@@ -1059,10 +1143,10 @@ jobs:
 
 
       # ======================================================================
-      # PUT COMPLETE MINER + BENCHMARK RUNTIME INTO TAURI RESOURCES
+      # PREPARE TAURI RESOURCE DIRECTORY
       # ======================================================================
 
-      - name: Prepare GUI miner resources
+      - name: Prepare GUI resources
         if: matrix.gui == true
         shell: bash
         run: |
@@ -1071,44 +1155,34 @@ jobs:
           RESOURCE_DIR="gui/agent/src-tauri/binaries"
 
           rm -rf "$RESOURCE_DIR"
+
           mkdir -p "$RESOURCE_DIR"
 
           echo "============================================================"
-          echo "Preparing complete miner runtime for GUI"
+          echo "Preparing complete Agent runtime"
           echo "============================================================"
 
+
           # ------------------------------------------------------------------
-          # Normal miner
+          # Miner
           # ------------------------------------------------------------------
 
           cp -r build-miner/* "$RESOURCE_DIR/"
+
 
           # ------------------------------------------------------------------
           # Benchmark executable
           # ------------------------------------------------------------------
 
-          if [ "${{ matrix.platform }}" = "windows" ]; then
+          if [ -d "build-benchmark" ]; then
 
-            test -f build-benchmark/sugarmaker-benchmark.exe
-
-            cp \
-              build-benchmark/sugarmaker-benchmark.exe \
-              "$RESOURCE_DIR/sugarmaker-benchmark.exe"
-
-          else
-
-            test -f build-benchmark/sugarmaker-benchmark
-
-            cp \
-              build-benchmark/sugarmaker-benchmark \
-              "$RESOURCE_DIR/sugarmaker-benchmark"
-
-            chmod +x "$RESOURCE_DIR/sugarmaker-benchmark"
+            cp -r build-benchmark/* "$RESOURCE_DIR/"
 
           fi
 
+
           # ------------------------------------------------------------------
-          # Make native Unix miner executable.
+          # Permissions
           # ------------------------------------------------------------------
 
           if [ "${{ matrix.platform }}" != "windows" ] && \
@@ -1116,48 +1190,31 @@ jobs:
 
             chmod +x "$RESOURCE_DIR/sugarmaker"
 
-          fi
-
-          echo ""
-          echo "============================================================"
-          echo "GUI resources:"
-          echo "============================================================"
-
-          ls -lh "$RESOURCE_DIR"
-
-
-      # ======================================================================
-      # VERIFY TAURI BENCHMARK RESOURCE
-      # ======================================================================
-
-      - name: Verify GUI benchmark resource
-        if: matrix.gui == true
-        shell: bash
-        run: |
-          set -e
-
-          RESOURCE_DIR="gui/agent/src-tauri/binaries"
-
-          if [ "${{ matrix.platform }}" = "windows" ]; then
-
-            test -f "$RESOURCE_DIR/sugarmaker-benchmark.exe"
-
-          else
-
-            test -f "$RESOURCE_DIR/sugarmaker-benchmark"
+            if [ -f "$RESOURCE_DIR/sugarmaker-benchmark" ]; then
+              chmod +x "$RESOURCE_DIR/sugarmaker-benchmark"
+            fi
 
           fi
 
+
           echo ""
           echo "============================================================"
-          echo "Tauri benchmark resource is ready."
+          echo "Agent resources"
           echo "============================================================"
 
-          ls -lh "$RESOURCE_DIR"
+          ls -lah "$RESOURCE_DIR"
+
+
+          echo ""
+          echo "Files:"
+
+          find "$RESOURCE_DIR" -maxdepth 1 -type f \
+            -printf '%f\n' 2>/dev/null || \
+            ls "$RESOURCE_DIR"
 
 
       # ======================================================================
-      # INSTALL AGENT DEPENDENCIES
+      # INSTALL AGENT FRONTEND
       # ======================================================================
 
       - name: Install agent frontend dependencies
@@ -1166,11 +1223,12 @@ jobs:
         shell: bash
         run: |
           set -e
+
           npm install
 
 
       # ======================================================================
-      # INSTALL DASHBOARD DEPENDENCIES
+      # INSTALL DASHBOARD FRONTEND
       # ======================================================================
 
       - name: Install dashboard frontend dependencies
@@ -1179,6 +1237,7 @@ jobs:
         shell: bash
         run: |
           set -e
+
           npm install
 
 
@@ -1195,8 +1254,11 @@ jobs:
 
           echo "============================================================"
           echo "Building Sugarmaker Agent GUI"
+          echo "============================================================"
+
           echo "Target: ${{ matrix.name }}"
           echo "Rust:   ${{ matrix.rust_target }}"
+
           echo "============================================================"
 
           npm run build
@@ -1217,9 +1279,12 @@ jobs:
           set -e
 
           echo "============================================================"
-          echo "Building Sugarmaker Dashboard"
+          echo "Building Sugarmaker Dashboard GUI"
+          echo "============================================================"
+
           echo "Target: ${{ matrix.name }}"
           echo "Rust:   ${{ matrix.rust_target }}"
+
           echo "============================================================"
 
           npm run build
@@ -1229,7 +1294,7 @@ jobs:
 
 
       # ======================================================================
-      # COLLECT EVERYTHING
+      # FINAL ARCHITECTURE BUNDLE
       # ======================================================================
 
       - name: Prepare final architecture bundle
@@ -1237,29 +1302,17 @@ jobs:
         run: |
           set -e
 
-          # ------------------------------------------------------------------
-          # Uploaded artifact layout:
-          #
-          # dist/
-          # ├── miner/
-          # ├── agent/
-          # └── dashboard/
-          #
-          # ------------------------------------------------------------------
-
           rm -rf dist
 
           mkdir -p dist/miner
 
+
           # ------------------------------------------------------------------
           # Miner
-          #
-          # IMPORTANT:
-          # Benchmark executable is intentionally NOT copied here.
-          # It is an Agent-only runtime component.
           # ------------------------------------------------------------------
 
           cp -r build-miner/* dist/miner/
+
 
           # ------------------------------------------------------------------
           # Agent GUI
@@ -1272,14 +1325,18 @@ jobs:
             AGENT_BUNDLE="gui/agent/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
 
             if [ ! -d "$AGENT_BUNDLE" ]; then
+
               echo "ERROR: Agent bundle directory was not created:"
               echo "$AGENT_BUNDLE"
+
               exit 1
+
             fi
 
             cp -r "$AGENT_BUNDLE"/* dist/agent/
 
           fi
+
 
           # ------------------------------------------------------------------
           # Dashboard GUI
@@ -1292,14 +1349,18 @@ jobs:
             DASHBOARD_BUNDLE="gui/dashboard/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
 
             if [ ! -d "$DASHBOARD_BUNDLE" ]; then
+
               echo "ERROR: Dashboard bundle directory was not created:"
               echo "$DASHBOARD_BUNDLE"
+
               exit 1
+
             fi
 
             cp -r "$DASHBOARD_BUNDLE"/* dist/dashboard/
 
           fi
+
 
           # ------------------------------------------------------------------
           # Build information
@@ -1329,12 +1390,13 @@ jobs:
             - Sugarmaker CPU Miner
           EOF
 
+
           if [ "${{ matrix.gui }}" = "true" ]; then
 
             cat >> dist/BUILD-INFO.txt <<EOF
             - Sugarmaker Agent GUI
-            - Sugarmaker CPU Benchmark
             - Sugarmaker Dashboard GUI
+            - CPU Benchmark
           EOF
 
           else
@@ -1345,20 +1407,15 @@ jobs:
 
           fi
 
+
           echo "============================================================"
           echo "FINAL BUILD"
           echo "============================================================"
 
-          echo ""
-          echo "Final directory layout:"
-          find dist -maxdepth 4 -print
+          find dist -maxdepth 4 -type f -print
 
           echo ""
-          echo "Final files:"
-          find dist -type f -print
 
-          echo ""
-          echo "Final size:"
           du -sh dist || true
 
 
@@ -1370,5 +1427,292 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sugarmaker-${{ matrix.name }}
-          path: dist
+          path: dist/**
           if-no-files-found: error
+
+
+  # ==========================================================================
+  # GUI FOR GTK-CROSS-BLOCKED LINUX TARGETS
+  # ==========================================================================
+  #
+  # These remain separate from the normal cross-build matrix because Tauri's
+  # Linux WebKit/GTK dependencies need to exist for the target architecture.
+  #
+  # i686 can run directly inside an i386 container.
+  #
+  # armv7l, aarch64 and riscv64 use QEMU.
+  #
+  # ==========================================================================
+
+
+  # ==========================================================================
+  # i686 LINUX GUI
+  # ==========================================================================
+
+  build-gui-i686-linux:
+
+    name: gui (i686-linux)
+
+    needs: build
+
+    runs-on: ubuntu-22.04
+
+    container:
+      image: i386/ubuntu:22.04
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - name: Download miner build
+        uses: actions/download-artifact@v4
+        with:
+          name: sugarmaker-i686-linux
+          path: downloaded
+
+
+      - name: Install GUI dependencies
+        shell: bash
+        run: |
+          set -e
+
+          apt-get update
+
+          apt-get install -y --no-install-recommends \
+            curl \
+            ca-certificates \
+            build-essential \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            patchelf \
+            file \
+            git
+
+
+          curl \
+            --proto '=https' \
+            --tlsv1.2 \
+            -sSf \
+            https://sh.rustup.rs \
+            | sh -s -- \
+              -y \
+              --default-toolchain stable
+
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+
+          curl \
+            -fsSL \
+            https://deb.nodesource.com/setup_20.x \
+            | bash -
+
+          apt-get install -y nodejs
+
+
+      - name: Prepare Agent resources
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p gui/agent/src-tauri/binaries
+
+          cp downloaded/miner/sugarmaker \
+            gui/agent/src-tauri/binaries/sugarmaker
+
+          chmod +x \
+            gui/agent/src-tauri/binaries/sugarmaker
+
+
+      - name: Build Agent GUI
+        shell: bash
+        working-directory: gui/agent
+        run: |
+          set -e
+
+          export PATH="$HOME/.cargo/bin:$PATH"
+
+          npm install
+
+          npm run build
+
+          npx tauri build
+
+
+      - name: Collect artifact
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p dist/agent
+          mkdir -p dist/miner
+
+          cp -r \
+            gui/agent/src-tauri/target/release/bundle/* \
+            dist/agent/ || true
+
+          cp -r \
+            downloaded/miner/* \
+            dist/miner/
+
+
+      - name: Upload i686 GUI
+        uses: actions/upload-artifact@v4
+        with:
+          name: sugarmaker-gui-i686-linux
+          path: dist/**
+          if-no-files-found: warn
+
+
+  # ==========================================================================
+  # ARMV7 / AARCH64 / RISCV64 GUI
+  # ==========================================================================
+
+  build-gui-qemu:
+
+    name: gui (${{ matrix.name }}, QEMU)
+
+    needs: build
+
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+
+        include:
+
+          - name: armv7l-linux
+            artifact_name: sugarmaker-armv7l-linux
+            qemu_arch: armv7
+            qemu_distro: ubuntu22.04
+
+          - name: aarch64-linux
+            artifact_name: sugarmaker-aarch64-linux
+            qemu_arch: aarch64
+            qemu_distro: ubuntu22.04
+
+          - name: riscv64-linux
+            artifact_name: sugarmaker-riscv64-linux
+            qemu_arch: riscv64
+            qemu_distro: ubuntu22.04
+
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      - name: Download miner build
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: downloaded
+
+
+      - name: Build inside emulated container
+        uses: uraimo/run-on-arch-action@v2
+
+        with:
+
+          arch: ${{ matrix.qemu_arch }}
+
+          distro: ${{ matrix.qemu_distro }}
+
+          githubToken: ${{ github.token }}
+
+          dockerRunArgs: |
+            --volume "${PWD}:/workspace"
+
+
+          install: |
+            apt-get update -q -y
+
+            apt-get install -q -y \
+              curl \
+              ca-certificates \
+              build-essential \
+              pkg-config \
+              libwebkit2gtk-4.1-dev \
+              libappindicator3-dev \
+              librsvg2-dev \
+              libssl-dev \
+              patchelf \
+              file \
+              git
+
+
+            curl \
+              --proto '=https' \
+              --tlsv1.2 \
+              -sSf \
+              https://sh.rustup.rs \
+              | sh -s -- \
+                -y \
+                --default-toolchain stable
+
+
+            curl \
+              -fsSL \
+              https://deb.nodesource.com/setup_20.x \
+              | bash -
+
+            apt-get install -q -y nodejs
+
+
+          run: |
+            set -e
+
+            export PATH="$HOME/.cargo/bin:$PATH"
+
+            cd /workspace
+
+
+            mkdir -p gui/agent/src-tauri/binaries
+
+            cp \
+              downloaded/miner/sugarmaker \
+              gui/agent/src-tauri/binaries/sugarmaker
+
+            chmod +x \
+              gui/agent/src-tauri/binaries/sugarmaker
+
+
+            cd gui/agent
+
+            npm install
+
+            npm run build
+
+            npx tauri build
+
+
+      - name: Collect QEMU GUI artifact
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p dist/agent
+          mkdir -p dist/miner
+
+          cp -r \
+            gui/agent/src-tauri/target/release/bundle/* \
+            dist/agent/ || true
+
+          cp -r \
+            downloaded/miner/* \
+            dist/miner/
+
+
+      - name: Upload QEMU GUI
+        uses: actions/upload-artifact@v4
+        with:
+          name: sugarmaker-gui-${{ matrix.name }}
+          path: dist/**
+          if-no-files-found: warn
