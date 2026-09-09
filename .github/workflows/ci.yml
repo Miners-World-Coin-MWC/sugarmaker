@@ -892,7 +892,6 @@ jobs:
             yespower-1.0.1/yespower-opt.c \
             yespower-1.0.1/sha256.c \
             -static-libgcc \
-            -static-libwinpthread \
             -o build-benchmark/sugarmaker-benchmark.exe
 
       - name: Build Sugarmaker Benchmark - Windows i686
@@ -914,7 +913,6 @@ jobs:
             yespower-1.0.1/sha256.c \
             -static \
             -static-libgcc \
-            -static-libwinpthread \
             -o build-benchmark/sugarmaker-benchmark.exe
 
       - name: Build Sugarmaker Benchmark - Windows ARM64
