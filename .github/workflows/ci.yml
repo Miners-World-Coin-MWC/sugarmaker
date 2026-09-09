@@ -17,7 +17,7 @@ env:
 jobs:
 
   # ========================================================================
-  # BUILD MINER + GUI FOR EVERY TARGET
+  # BUILD MINER + BENCHMARK + GUI FOR EVERY TARGET
   # ========================================================================
 
   build:
@@ -692,15 +692,292 @@ jobs:
 
 
       # ======================================================================
-      # NORMALIZE MINER BINARY
+      # BUILD BENCHMARK - LINUX
       # ======================================================================
 
-      - name: Prepare miner binary
+      - name: Build Sugarmaker Benchmark - Linux
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          BENCHMARK_SOURCES="
+            yespower-1.0.1/benchmark.c
+            yespower-1.0.1/yespower-opt.c
+            yespower-1.0.1/sha256.c
+          "
+
+          case "${{ matrix.arch }}" in
+
+            x86_64)
+              CC="gcc"
+              CFLAGS="-O3 -DNDEBUG -std=c11 -pthread"
+              LDFLAGS="-pthread"
+              ;;
+
+            i686)
+              CC="gcc"
+              CFLAGS="-O3 -DNDEBUG -std=c11 -m32 -pthread"
+              LDFLAGS="-m32 -pthread"
+              ;;
+
+            armv7l)
+              CC="arm-linux-gnueabihf-gcc"
+              CFLAGS="-O3 -DNDEBUG -std=c11 -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+              LDFLAGS=""
+              ;;
+
+            aarch64)
+              CC="aarch64-linux-gnu-gcc"
+              CFLAGS="-O3 -DNDEBUG -std=c11 -march=armv8-a"
+              LDFLAGS=""
+              ;;
+
+            riscv64)
+              CC="riscv64-linux-gnu-gcc"
+              CFLAGS="-O3 -DNDEBUG -std=c11 -march=rv64gc -mabi=lp64d"
+              LDFLAGS=""
+              ;;
+
+            *)
+              echo "Unsupported Linux architecture: ${{ matrix.arch }}"
+              exit 1
+              ;;
+          esac
+
+          echo "============================================================"
+          echo "Building Sugarmaker Benchmark"
+          echo "Target: ${{ matrix.name }}"
+          echo "Compiler: ${CC}"
+          echo "============================================================"
+
+          ${CC} \
+            ${CFLAGS} \
+            -I. \
+            -Iyespower-1.0.1 \
+            ${BENCHMARK_SOURCES} \
+            -o build-benchmark/sugarmaker-benchmark \
+            ${LDFLAGS}
+
+          file build-benchmark/sugarmaker-benchmark
+          ls -lh build-benchmark/sugarmaker-benchmark
+
+          chmod +x build-benchmark/sugarmaker-benchmark
+
+
+      # ======================================================================
+      # BUILD BENCHMARK - MACOS
+      # ======================================================================
+
+      - name: Build Sugarmaker Benchmark - macOS
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            ARCH_FLAGS="-arch x86_64"
+          else
+            ARCH_FLAGS="-arch arm64"
+          fi
+
+          echo "============================================================"
+          echo "Building Sugarmaker Benchmark"
+          echo "Target: ${{ matrix.name }}"
+          echo "Architecture: ${{ matrix.arch }}"
+          echo "============================================================"
+
+          clang \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            ${ARCH_FLAGS} \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark \
+            -lpthread
+
+          file build-benchmark/sugarmaker-benchmark
+          ls -lh build-benchmark/sugarmaker-benchmark
+
+          chmod +x build-benchmark/sugarmaker-benchmark
+
+
+      # ======================================================================
+      # BUILD BENCHMARK - WINDOWS x86_64
+      # ======================================================================
+
+      - name: Build Sugarmaker Benchmark - Windows x86_64
+        if: matrix.platform == 'windows' && matrix.arch == 'x86_64'
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          echo "============================================================"
+          echo "Building Sugarmaker Benchmark"
+          echo "Target: Windows x86_64"
+          echo "============================================================"
+
+          gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark.exe \
+            -static-libgcc \
+            -static-libwinpthread
+
+          file build-benchmark/sugarmaker-benchmark.exe
+          ls -lh build-benchmark/sugarmaker-benchmark.exe
+
+
+      # ======================================================================
+      # BUILD BENCHMARK - WINDOWS ARM64
+      # ======================================================================
+
+      - name: Build Sugarmaker Benchmark - Windows ARM64
+        if: matrix.platform == 'windows' && matrix.arch == 'arm64'
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          echo "============================================================"
+          echo "Building Sugarmaker Benchmark"
+          echo "Target: Windows ARM64"
+          echo "============================================================"
+
+          clang \
+            --target=aarch64-w64-windows-gnu \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark.exe
+
+          file build-benchmark/sugarmaker-benchmark.exe
+          ls -lh build-benchmark/sugarmaker-benchmark.exe
+
+
+      # ======================================================================
+      # BUILD BENCHMARK - WINDOWS i686
+      # ======================================================================
+
+      - name: Build Sugarmaker Benchmark - Windows i686
+        if: matrix.platform == 'win32-cross'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          echo "============================================================"
+          echo "Building Sugarmaker Benchmark"
+          echo "Target: Windows i686"
+          echo "============================================================"
+
+          i686-w64-mingw32-gcc-posix \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -DWIN32 \
+            -D_WIN32_WINNT=0x0600 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -o build-benchmark/sugarmaker-benchmark.exe \
+            -static \
+            -static-libgcc \
+            -static-libstdc++ \
+            -static-libwinpthread
+
+          file build-benchmark/sugarmaker-benchmark.exe
+          ls -lh build-benchmark/sugarmaker-benchmark.exe
+
+
+      # ======================================================================
+      # STRIP BENCHMARK
+      # ======================================================================
+
+      - name: Strip benchmark binary
+        shell: bash
+        run: |
+          set -e
+
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+
+            if [ "${{ matrix.arch }}" = "x86_64" ]; then
+              strip="strip"
+            elif [ "${{ matrix.arch }}" = "arm64" ]; then
+              strip="llvm-strip"
+            else
+              strip=""
+            fi
+
+            if [ -n "$strip" ] && command -v "$strip" >/dev/null 2>&1; then
+              "$strip" \
+                --strip-debug \
+                --strip-unneeded \
+                build-benchmark/sugarmaker-benchmark.exe || true
+            fi
+
+          elif [ "${{ matrix.platform }}" = "win32-cross" ]; then
+
+            i686-w64-mingw32-strip \
+              --strip-debug \
+              --strip-unneeded \
+              build-benchmark/sugarmaker-benchmark.exe || true
+
+          else
+
+            strip \
+              --strip-debug \
+              --strip-unneeded \
+              build-benchmark/sugarmaker-benchmark || true
+
+          fi
+
+          echo "============================================================"
+          echo "Benchmark binary:"
+          echo "============================================================"
+
+          ls -lh build-benchmark/
+
+
+      # ======================================================================
+      # NORMALIZE MINER + BENCHMARK BINARIES
+      # ======================================================================
+
+      - name: Prepare miner and benchmark binaries
         shell: bash
         run: |
           set -e
 
           mkdir -p build-miner
+
+          # --------------------------------------------------------------
+          # Miner
+          # --------------------------------------------------------------
 
           if [ "${{ matrix.platform }}" = "windows" ] || [ "${{ matrix.platform }}" = "win32-cross" ]; then
             cp sugarmaker.exe build-miner/sugarmaker.exe
@@ -708,8 +985,20 @@ jobs:
             cp sugarmaker build-miner/sugarmaker
           fi
 
+          # --------------------------------------------------------------
+          # Benchmark
+          # --------------------------------------------------------------
+
+          if [ "${{ matrix.platform }}" = "windows" ] || [ "${{ matrix.platform }}" = "win32-cross" ]; then
+            cp build-benchmark/sugarmaker-benchmark.exe \
+              build-miner/sugarmaker-benchmark.exe
+          else
+            cp build-benchmark/sugarmaker-benchmark \
+              build-miner/sugarmaker-benchmark
+          fi
+
           echo "============================================================"
-          echo "Miner built successfully"
+          echo "Miner + benchmark built successfully"
           echo "============================================================"
 
           file build-miner/* || true
@@ -728,38 +1017,53 @@ jobs:
 
           mkdir -p build-miner
 
-          cp sugarmaker.exe build-miner/
+          echo "============================================================"
+          echo "Bundling Windows runtime DLLs"
+          echo "============================================================"
 
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
-
             DLL_DIR="/mingw64/bin"
-
           elif [ "${{ matrix.arch }}" = "arm64" ]; then
-
             DLL_DIR="/clangarm64/bin"
-
           else
-
             exit 0
-
           fi
 
-          echo "============================================================"
-          echo "Detecting required Windows DLLs"
-          echo "============================================================"
-
+          echo ""
+          echo "Sugarmaker dependencies:"
           ldd sugarmaker.exe || true
+
+          echo ""
+          echo "Benchmark dependencies:"
+          ldd build-miner/sugarmaker-benchmark.exe || true
+
+          # --------------------------------------------------------------
+          # Miner DLLs
+          # --------------------------------------------------------------
 
           ldd sugarmaker.exe \
             | grep "$DLL_DIR" \
             | awk '{print $3}' \
             | sort -u \
             | while read dll; do
-                [ -f "$dll" ] && cp "$dll" build-miner/
+                [ -f "$dll" ] && cp -f "$dll" build-miner/
               done
 
+          # --------------------------------------------------------------
+          # Benchmark DLLs
+          # --------------------------------------------------------------
+
+          ldd build-miner/sugarmaker-benchmark.exe \
+            | grep "$DLL_DIR" \
+            | awk '{print $3}' \
+            | sort -u \
+            | while read dll; do
+                [ -f "$dll" ] && cp -f "$dll" build-miner/
+              done
+
+          echo ""
           echo "============================================================"
-          echo "Bundled Windows runtime libraries:"
+          echo "Bundled Windows runtime:"
           echo "============================================================"
 
           ls -lh build-miner/
@@ -777,7 +1081,7 @@ jobs:
 
 
       # ======================================================================
-      # PUT COMPLETE MINER RUNTIME INTO TAURI RESOURCES
+      # PUT COMPLETE MINER + BENCHMARK RUNTIME INTO TAURI RESOURCES
       # ======================================================================
 
       - name: Prepare GUI miner resources
@@ -792,19 +1096,20 @@ jobs:
           mkdir -p "$RESOURCE_DIR"
 
           echo "============================================================"
-          echo "Preparing complete miner runtime for GUI"
+          echo "Preparing complete miner + benchmark runtime for GUI"
           echo "============================================================"
 
-          # Copy the complete miner runtime, including Windows DLLs.
+          # Copy the complete runtime.
           cp -r build-miner/* "$RESOURCE_DIR/"
 
-          # Make native Unix miner executable.
+          # Make native Unix binaries executable.
           if [ "${{ matrix.platform }}" != "windows" ] && [ "${{ matrix.platform }}" != "win32-cross" ]; then
             chmod +x "$RESOURCE_DIR/sugarmaker"
+            chmod +x "$RESOURCE_DIR/sugarmaker-benchmark"
           fi
 
           echo ""
-          echo "GUI miner resources:"
+          echo "GUI resources:"
           find "$RESOURCE_DIR" -maxdepth 1 -type f -printf '%f\n' 2>/dev/null || ls -lh "$RESOURCE_DIR"
 
           echo ""
@@ -894,14 +1199,14 @@ jobs:
           set -e
 
           # --------------------------------------------------------------
-          # The uploaded artifact contains ONLY:
+          # Final artifact layout:
           #
           # dist/
           # ├── miner/
+          # │   ├── sugarmaker
+          # │   └── sugarmaker-benchmark
           # ├── agent/
           # └── dashboard/
-          #
-          # GUI directories are only created for GUI-enabled targets.
           # --------------------------------------------------------------
 
           rm -rf dist
@@ -909,7 +1214,7 @@ jobs:
           mkdir -p dist/miner
 
           # --------------------------------------------------------------
-          # Miner
+          # Miner + benchmark
           # --------------------------------------------------------------
 
           cp -r build-miner/* dist/miner/
@@ -974,11 +1279,13 @@ jobs:
           Rust Target:
             ${{ matrix.rust_target }}
 
-          Algorithm:
+          Algorithms:
             YespowerMwc
+            YespowerAdvc
 
           Components:
             - Sugarmaker CPU Miner
+            - Sugarmaker CPU Benchmark
           EOF
 
           if [ "${{ matrix.gui }}" = "true" ]; then
