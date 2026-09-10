@@ -33,6 +33,39 @@ export interface RigInfo {
   arch: string;
 }
 
+/*
+ * CPU benchmark result returned by the Tauri backend.
+ *
+ * This mirrors the JSON schema produced by
+ * sugarmaker-benchmark while also including the
+ * system information that the GUI already knows.
+ */
+export interface BenchmarkResult {
+  schema_version: number;
+
+  benchmark: {
+    algorithm: string;
+    cpu: string;
+    architecture: string;
+    os: string;
+    threads: number;
+    hashrate_hps: number;
+    per_thread_hps: number;
+    duration_seconds: number;
+    sugarmaker_version: string;
+    timestamp: string;
+  };
+}
+
+/*
+ * Benchmark configuration used by the Agent UI.
+ */
+export interface BenchmarkConfig {
+  algorithm: "YespowerMwc" | "YespowerAdvc";
+  threads: number;
+  duration: number;
+}
+
 export function emptyWorker(label: string): WorkerConfig {
   return {
     id: crypto.randomUUID(),
@@ -50,6 +83,10 @@ export function emptyWorker(label: string): WorkerConfig {
 }
 
 export function formatHashrate(hps: number): string {
+  if (hps >= 1_000_000_000) {
+    return (hps / 1_000_000_000).toFixed(2) + " GH/s";
+  }
+
   if (hps >= 1_000_000) {
     return (hps / 1_000_000).toFixed(2) + " MH/s";
   }
