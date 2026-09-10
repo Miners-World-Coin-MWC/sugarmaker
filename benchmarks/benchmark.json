@@ -1,1 +1,17 @@
-{}
+{
+  "schema_version": 1,
+  "benchmarks": [
+    {
+      "algorithm": "YespowerMwc",
+      "cpu": "Intel Core i5-8365U",
+      "architecture": "x86_64",
+      "os": "Windows",
+      "threads": 1,
+      "hashrate_hps": 238.57,
+      "per_thread_hps": 238.57,
+      "duration_seconds": 30,
+      "sugarmaker_version": "1.0.0",
+      "timestamp": "2026-09-09T23:08:33Z"
+    }
+  ]
+}
