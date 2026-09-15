@@ -8,6 +8,8 @@ mod ws_server;
 
 use config::{load_workers, save_workers, WorkerConfig};
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use sysinfo_util::RigInfo;
 use tauri::{Manager, State};
@@ -152,7 +154,12 @@ fn benchmark_binary_path(app: &tauri::AppHandle) -> Result<String, String> {
     let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|e| format!("Failed to locate application resources: {}", e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to locate application resources: {}",
+                e
+            )
+        })?;
 
     let bundled = resource_dir
         .join("binaries")
@@ -166,6 +173,146 @@ fn benchmark_binary_path(app: &tauri::AppHandle) -> Result<String, String> {
     Ok(benchmark_binary_name().to_string())
 }
 
+/// Return the path used for the latest local benchmark result.
+fn benchmark_result_path(
+    app: &tauri::AppHandle,
+) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| {
+            format!(
+                "Failed to locate application data directory: {}",
+                e
+            )
+        })?;
+
+    Ok(app_data_dir.join("benchmark-result.json"))
+}
+
+/// Save the latest benchmark result locally.
+///
+/// The Agent keeps this file separate from the community benchmark data.
+/// It represents only the user's own latest benchmark result.
+///
+/// Each successful benchmark replaces the previous file.
+fn save_benchmark_result(
+    app: &tauri::AppHandle,
+    result: &BenchmarkResult,
+) -> Result<PathBuf, String> {
+    let result_path = benchmark_result_path(app)?;
+
+    if let Some(parent) = result_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed to create benchmark result directory '{}': {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    let json = serde_json::to_string_pretty(result)
+        .map_err(|e| {
+            format!(
+                "Failed to serialize benchmark result: {}",
+                e
+            )
+        })?;
+
+    fs::write(
+        &result_path,
+        format!("{}\n", json),
+    )
+    .map_err(|e| {
+        format!(
+            "Failed to save benchmark result '{}': {}",
+            result_path.display(),
+            e
+        )
+    })?;
+
+    Ok(result_path)
+}
+
+/// Open the latest local benchmark-result.json using the operating
+/// system's default application.
+///
+/// Windows:
+///     cmd /C start "" <file>
+///
+/// macOS:
+///     open <file>
+///
+/// Linux / other Unix:
+///     xdg-open <file>
+#[tauri::command]
+async fn open_benchmark_result(
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let result_path = benchmark_result_path(&app)?;
+
+    if !result_path.exists() {
+        return Err(
+            "No local benchmark result exists yet. Run a benchmark first."
+                .to_string(),
+        );
+    }
+
+    let path = result_path
+        .to_string_lossy()
+        .to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "start",
+                "",
+                &path,
+            ])
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Failed to open benchmark-result.json: {}",
+                    e
+                )
+            })?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Failed to open benchmark-result.json: {}",
+                    e
+                )
+            })?;
+    }
+
+    #[cfg(all(
+        unix,
+        not(target_os = "macos")
+    ))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Failed to open benchmark-result.json: {}",
+                    e
+                )
+            })?;
+    }
+
+    Ok(())
+}
+
 /// Run the standalone Sugarmaker CPU benchmark.
 ///
 /// Example:
@@ -175,6 +322,12 @@ fn benchmark_binary_path(app: &tauri::AppHandle) -> Result<String, String> {
 /// The benchmark executable remains the source of truth for the actual
 /// Yespower implementation. The Agent simply launches it and parses its
 /// machine-readable BENCHMARK_RESULT line.
+///
+/// After a successful benchmark the Agent automatically saves:
+///
+///     benchmark-result.json
+///
+/// inside the application's user-writable application data directory.
 #[tauri::command]
 async fn run_benchmark(
     app: tauri::AppHandle,
@@ -184,7 +337,9 @@ async fn run_benchmark(
 ) -> Result<BenchmarkResult, String> {
     let algorithm = algorithm.trim().to_string();
 
-    if algorithm != "YespowerMwc" && algorithm != "YespowerAdvc" {
+    if algorithm != "YespowerMwc"
+        && algorithm != "YespowerAdvc"
+    {
         return Err(
             "Unsupported benchmark algorithm. Use YespowerMwc or YespowerAdvc."
                 .to_string(),
@@ -192,11 +347,17 @@ async fn run_benchmark(
     }
 
     if threads == 0 {
-        return Err("Benchmark thread count must be at least 1.".to_string());
+        return Err(
+            "Benchmark thread count must be at least 1."
+                .to_string(),
+        );
     }
 
     if duration == 0 {
-        return Err("Benchmark duration must be at least 1 second.".to_string());
+        return Err(
+            "Benchmark duration must be at least 1 second."
+                .to_string(),
+        );
     }
 
     let binary = benchmark_binary_path(&app)?;
@@ -213,12 +374,18 @@ async fn run_benchmark(
         .map_err(|e| {
             format!(
                 "Failed to start sugarmaker-benchmark '{}': {}",
-                binary, e
+                binary,
+                e
             )
         })?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(
+        &output.stdout
+    );
+
+    let stderr = String::from_utf8_lossy(
+        &output.stderr
+    );
 
     if !output.status.success() {
         let details = if stderr.trim().is_empty() {
@@ -242,7 +409,10 @@ async fn run_benchmark(
 
     let result_line = stdout
         .lines()
-        .find(|line| line.trim_start().starts_with("BENCHMARK_RESULT "));
+        .find(|line| {
+            line.trim_start()
+                .starts_with("BENCHMARK_RESULT ")
+        });
 
     let result_line = match result_line {
         Some(line) => line.trim(),
@@ -254,7 +424,8 @@ async fn run_benchmark(
         }
     };
 
-    let fields = parse_benchmark_result_line(result_line)?;
+    let fields =
+        parse_benchmark_result_line(result_line)?;
 
     let result_algorithm = fields
         .get("algo")
@@ -285,12 +456,17 @@ async fn run_benchmark(
         "benchmark result",
     )?;
 
-    let rig = sysinfo_util::snapshot();
+    let rig =
+        sysinfo_util::snapshot();
 
-    let timestamp = chrono::Utc::now()
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let timestamp =
+        chrono::Utc::now()
+            .to_rfc3339_opts(
+                chrono::SecondsFormat::Secs,
+                true,
+            );
 
-    Ok(BenchmarkResult {
+    let result = BenchmarkResult {
         schema_version: 1,
         benchmark: BenchmarkData {
             algorithm: result_algorithm,
@@ -304,7 +480,20 @@ async fn run_benchmark(
             sugarmaker_version: "1.0.0".to_string(),
             timestamp,
         },
-    })
+    };
+
+    /*
+     * Save the validated benchmark result locally.
+     *
+     * If this fails, report the error to the GUI rather than pretending
+     * the local result was saved.
+     */
+    save_benchmark_result(
+        &app,
+        &result,
+    )?;
+
+    Ok(result)
 }
 
 /// Parse the machine-readable benchmark line:
@@ -314,7 +503,8 @@ async fn run_benchmark(
 fn parse_benchmark_result_line(
     line: &str,
 ) -> Result<HashMap<String, String>, String> {
-    let prefix = "BENCHMARK_RESULT ";
+    let prefix =
+        "BENCHMARK_RESULT ";
 
     if !line.starts_with(prefix) {
         return Err(
@@ -323,24 +513,34 @@ fn parse_benchmark_result_line(
         );
     }
 
-    let mut fields = HashMap::new();
+    let mut fields =
+        HashMap::new();
 
-    for token in line[prefix.len()..].split_whitespace() {
-        let (key, value) = token.split_once('=').ok_or_else(|| {
-            format!(
-                "Invalid benchmark result field '{}'.",
-                token
-            )
-        })?;
+    for token in line[prefix.len()..]
+        .split_whitespace()
+    {
+        let (key, value) =
+            token.split_once('=')
+                .ok_or_else(|| {
+                    format!(
+                        "Invalid benchmark result field '{}'.",
+                        token
+                    )
+                })?;
 
-        if key.is_empty() || value.is_empty() {
+        if key.is_empty()
+            || value.is_empty()
+        {
             return Err(format!(
                 "Invalid benchmark result field '{}'.",
                 token
             ));
         }
 
-        fields.insert(key.to_string(), value.to_string());
+        fields.insert(
+            key.to_string(),
+            value.to_string(),
+        );
     }
 
     Ok(fields)
@@ -351,19 +551,26 @@ fn parse_u32_field(
     name: &str,
     context: &str,
 ) -> Result<u32, String> {
-    let value = fields.get(name).ok_or_else(|| {
-        format!(
-            "Missing '{}' in {}.",
-            name, context
-        )
-    })?;
+    let value =
+        fields.get(name)
+            .ok_or_else(|| {
+                format!(
+                    "Missing '{}' in {}.",
+                    name,
+                    context
+                )
+            })?;
 
-    value.parse::<u32>().map_err(|_| {
-        format!(
-            "Invalid '{}' value '{}' in {}.",
-            name, value, context
-        )
-    })
+    value
+        .parse::<u32>()
+        .map_err(|_| {
+            format!(
+                "Invalid '{}' value '{}' in {}.",
+                name,
+                value,
+                context
+            )
+        })
 }
 
 fn parse_u64_field(
@@ -371,19 +578,26 @@ fn parse_u64_field(
     name: &str,
     context: &str,
 ) -> Result<u64, String> {
-    let value = fields.get(name).ok_or_else(|| {
-        format!(
-            "Missing '{}' in {}.",
-            name, context
-        )
-    })?;
+    let value =
+        fields.get(name)
+            .ok_or_else(|| {
+                format!(
+                    "Missing '{}' in {}.",
+                    name,
+                    context
+                )
+            })?;
 
-    value.parse::<u64>().map_err(|_| {
-        format!(
-            "Invalid '{}' value '{}' in {}.",
-            name, value, context
-        )
-    })
+    value
+        .parse::<u64>()
+        .map_err(|_| {
+            format!(
+                "Invalid '{}' value '{}' in {}.",
+                name,
+                value,
+                context
+            )
+        })
 }
 
 fn parse_f64_field(
@@ -391,24 +605,35 @@ fn parse_f64_field(
     name: &str,
     context: &str,
 ) -> Result<f64, String> {
-    let value = fields.get(name).ok_or_else(|| {
-        format!(
-            "Missing '{}' in {}.",
-            name, context
-        )
-    })?;
+    let value =
+        fields.get(name)
+            .ok_or_else(|| {
+                format!(
+                    "Missing '{}' in {}.",
+                    name,
+                    context
+                )
+            })?;
 
-    let parsed = value.parse::<f64>().map_err(|_| {
-        format!(
-            "Invalid '{}' value '{}' in {}.",
-            name, value, context
-        )
-    })?;
+    let parsed =
+        value.parse::<f64>()
+            .map_err(|_| {
+                format!(
+                    "Invalid '{}' value '{}' in {}.",
+                    name,
+                    value,
+                    context
+                )
+            })?;
 
-    if !parsed.is_finite() || parsed < 0.0 {
+    if !parsed.is_finite()
+        || parsed < 0.0
+    {
         return Err(format!(
             "Invalid '{}' value '{}' in {}.",
-            name, value, context
+            name,
+            value,
+            context
         ));
     }
 
@@ -433,53 +658,83 @@ fn detect_local_ip() -> String {
 }
 
 fn main() {
-    let initial_workers = load_workers();
+    let initial_workers =
+        load_workers();
 
-    let manager = WorkerManager::new(initial_workers.clone());
-    let manager_for_setup = manager.clone();
+    let manager =
+        WorkerManager::new(
+            initial_workers.clone()
+        );
+
+    let manager_for_setup =
+        manager.clone();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .manage(AppState { manager })
+        .plugin(
+            tauri_plugin_shell::init()
+        )
+        .manage(AppState {
+            manager,
+        })
         .setup(move |app| {
             // Resource dir is only known once the app is built, hence doing
             // this here rather than before tauri::Builder::default().
-            if let Ok(resource_dir) = app.path().resource_dir() {
-                config::set_resource_dir(resource_dir);
+            if let Ok(resource_dir) =
+                app.path().resource_dir()
+            {
+                config::set_resource_dir(
+                    resource_dir
+                );
             }
 
-            let manager_for_bg = manager_for_setup.clone();
-            let workers = initial_workers.clone();
+            let manager_for_bg =
+                manager_for_setup.clone();
 
-            tauri::async_runtime::spawn(async move {
-                // Start workers configured for autostart.
-                for cfg in workers {
-                    if cfg.autostart {
-                        let _ = manager_for_bg.start(&cfg.id).await;
+            let workers =
+                initial_workers.clone();
+
+            tauri::async_runtime::spawn(
+                async move {
+                    // Start workers configured for autostart.
+                    for cfg in workers {
+                        if cfg.autostart {
+                            let _ =
+                                manager_for_bg
+                                    .start(&cfg.id)
+                                    .await;
+                        }
                     }
-                }
 
-                // Start the dashboard WebSocket server.
-                let _ = ws_server::run(
-                    manager_for_bg,
-                    DASHBOARD_PORT,
-                )
-                .await;
-            });
+                    // Start the dashboard WebSocket server.
+                    let _ =
+                        ws_server::run(
+                            manager_for_bg,
+                            DASHBOARD_PORT,
+                        )
+                        .await;
+                },
+            );
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            list_workers,
-            get_stats,
-            get_rig_info,
-            get_dashboard_connection,
-            upsert_worker,
-            remove_worker,
-            start_worker,
-            stop_worker,
-            run_benchmark,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running sugarmaker-agent");
+        .invoke_handler(
+            tauri::generate_handler![
+                list_workers,
+                get_stats,
+                get_rig_info,
+                get_dashboard_connection,
+                upsert_worker,
+                remove_worker,
+                start_worker,
+                stop_worker,
+                run_benchmark,
+                open_benchmark_result,
+            ],
+        )
+        .run(
+            tauri::generate_context!()
+        )
+        .expect(
+            "error while running sugarmaker-agent"
+        );
 }
