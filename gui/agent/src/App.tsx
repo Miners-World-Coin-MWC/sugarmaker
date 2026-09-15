@@ -55,7 +55,9 @@ interface GitHubContentResponse {
   encoding?: string;
 }
 
-type BenchmarkAlgorithm = "YespowerMwc" | "YespowerAdvc";
+type BenchmarkAlgorithm =
+  | "YespowerMwc"
+  | "YespowerAdvc";
 
 const BENCHMARK_ALGORITHMS: BenchmarkAlgorithm[] = [
   "YespowerMwc",
@@ -67,12 +69,15 @@ const BENCHMARK_DURATIONS = [30, 60];
 /*
  * Read-only GitHub API endpoint.
  *
+ * IMPORTANT:
+ * The benchmark system is currently being developed on the
+ * Benchmark-system branch, so the Agent explicitly reads from
+ * that branch instead of the repository default/main branch.
+ *
  * The Agent never writes to GitHub.
- * This endpoint only retrieves the current community
- * benchmark.json from the repository's default branch.
  */
 const COMMUNITY_BENCHMARK_URL =
-  "https://api.github.com/repos/Miners-World-Coin-MWC/sugarmaker/contents/benchmarks/benchmark.json";
+  "https://api.github.com/repos/Miners-World-Coin-MWC/sugarmaker/contents/benchmarks/benchmark.json?ref=Benchmark-system";
 
 function decodeGitHubContent(content: string): string {
   const cleaned = content.replace(/\s/g, "");
@@ -127,11 +132,14 @@ function normaliseCommunityBenchmark(
 
 export default function App() {
   const [workers, setWorkers] = useState<WorkerConfig[]>([]);
-  const [stats, setStats] = useState<Record<string, WorkerStats>>({});
-  const [rig, setRig] = useState<RigInfo | null>(null);
+  const [stats, setStats] =
+    useState<Record<string, WorkerStats>>({});
+  const [rig, setRig] =
+    useState<RigInfo | null>(null);
   const [connection, setConnection] =
     useState<DashboardConnection | null>(null);
-  const [editing, setEditing] = useState<WorkerConfig | null>(null);
+  const [editing, setEditing] =
+    useState<WorkerConfig | null>(null);
 
   const [benchmarkAlgorithm, setBenchmarkAlgorithm] =
     useState<BenchmarkAlgorithm>("YespowerMwc");
@@ -159,6 +167,8 @@ export default function App() {
    *
    * A successful run_benchmark call means the Rust backend
    * has already created/overwritten benchmark-result.json.
+   *
+   * This is also restored from disk when the Agent starts.
    */
   const [localResultSaved, setLocalResultSaved] =
     useState<boolean>(false);
@@ -188,7 +198,9 @@ export default function App() {
     try {
       const [w, s] = await Promise.all([
         invoke<WorkerConfig[]>("list_workers"),
-        invoke<Record<string, WorkerStats>>("get_stats"),
+        invoke<Record<string, WorkerStats>>(
+          "get_stats"
+        ),
       ]);
 
       setWorkers(w);
@@ -203,9 +215,10 @@ export default function App() {
 
   async function loadConnectionInfo() {
     try {
-      const info = await invoke<DashboardConnection>(
-        "get_dashboard_connection"
-      );
+      const info =
+        await invoke<DashboardConnection>(
+          "get_dashboard_connection"
+        );
 
       setConnection(info);
     } catch (error) {
@@ -217,10 +230,100 @@ export default function App() {
   }
 
   /*
+   * Load the locally saved benchmark result.
+   *
+   * This is called when the Agent starts so the last
+   * successful benchmark survives application restarts.
+   */
+  async function loadSavedBenchmarkResult() {
+    try {
+      const result =
+        await invoke<BenchmarkResult | null>(
+          "get_saved_benchmark_result"
+        );
+
+      if (!result) {
+        setBenchmarkResult(null);
+        setLocalResultSaved(false);
+        return;
+      }
+
+      setBenchmarkResult(result);
+      setLocalResultSaved(true);
+      setLocalResultError(null);
+
+      /*
+       * Restore the algorithm used by the saved result.
+       *
+       * Only accept algorithms supported by the GUI.
+       */
+      if (
+        result.benchmark.algorithm ===
+          "YespowerMwc" ||
+        result.benchmark.algorithm ===
+          "YespowerAdvc"
+      ) {
+        setBenchmarkAlgorithm(
+          result.benchmark
+            .algorithm as BenchmarkAlgorithm
+        );
+      }
+
+      /*
+       * Restore the thread count where possible.
+       *
+       * The rig validation effect below will clamp this
+       * to the available logical CPU count.
+       */
+      if (
+        Number.isFinite(
+          result.benchmark.threads
+        ) &&
+        result.benchmark.threads > 0
+      ) {
+        setBenchmarkThreads(
+          result.benchmark.threads
+        );
+      }
+
+      /*
+       * Restore the duration selector when the saved
+       * duration matches one of the supported GUI values.
+       */
+      if (
+        BENCHMARK_DURATIONS.includes(
+          result.benchmark
+            .duration_seconds
+        )
+      ) {
+        setBenchmarkDuration(
+          result.benchmark
+            .duration_seconds
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Failed to load saved benchmark result:",
+        error
+      );
+
+      /*
+       * Do not destroy the existing GUI state if the
+       * local file cannot be read. Simply report the
+       * error in the console for now.
+       */
+      setLocalResultSaved(false);
+    }
+  }
+
+  /*
    * Load the community benchmark file from GitHub.
    *
    * This is intentionally read-only.
    * Nothing is uploaded or changed here.
+   *
+   * The benchmark data is currently read from the
+   * Benchmark-system branch rather than main/default.
    */
   async function loadCommunityBenchmarks() {
     setCommunityLoading(true);
@@ -254,10 +357,14 @@ export default function App() {
       }
 
       const jsonText =
-        decodeGitHubContent(githubData.content);
+        decodeGitHubContent(
+          githubData.content
+        );
 
       const parsed =
-        JSON.parse(jsonText) as CommunityBenchmarkFile;
+        JSON.parse(
+          jsonText
+        ) as CommunityBenchmarkFile;
 
       if (
         !parsed ||
@@ -270,7 +377,9 @@ export default function App() {
 
       const validBenchmarks =
         parsed.benchmarks
-          .map(normaliseCommunityBenchmark)
+          .map(
+            normaliseCommunityBenchmark
+          )
           .filter(
             (
               benchmark
@@ -278,7 +387,9 @@ export default function App() {
               benchmark !== null
           );
 
-      setCommunityBenchmarks(validBenchmarks);
+      setCommunityBenchmarks(
+        validBenchmarks
+      );
     } catch (error) {
       console.error(
         "Failed to load community benchmarks:",
@@ -300,12 +411,32 @@ export default function App() {
   useEffect(() => {
     refresh();
 
+    /*
+     * Restore the most recent local benchmark.
+     *
+     * This does not execute a benchmark.
+     * It only reads benchmark-result.json.
+     */
+    loadSavedBenchmarkResult();
+
     invoke<RigInfo>("get_rig_info")
       .then((info) => {
         setRig(info);
 
         if (info.logical_cores > 0) {
-          setBenchmarkThreads(1);
+          /*
+           * Keep the existing default behaviour for
+           * a rig that has no previously saved result.
+           *
+           * loadSavedBenchmarkResult() may subsequently
+           * restore the saved thread count.
+           */
+          setBenchmarkThreads(
+            (current) =>
+              current > info.logical_cores
+                ? info.logical_cores
+                : current
+          );
         }
       })
       .catch((error) => {
@@ -322,7 +453,8 @@ export default function App() {
       1500
     );
 
-    return () => clearInterval(interval);
+    return () =>
+      clearInterval(interval);
   }, []);
 
   /*
@@ -338,15 +470,23 @@ export default function App() {
       return;
     }
 
-    const interval = window.setInterval(() => {
-      setBenchmarkElapsed((current) => {
-        if (current >= benchmarkDuration) {
-          return current;
-        }
+    const interval = window.setInterval(
+      () => {
+        setBenchmarkElapsed(
+          (current) => {
+            if (
+              current >=
+              benchmarkDuration
+            ) {
+              return current;
+            }
 
-        return current + 1;
-      });
-    }, 1000);
+            return current + 1;
+          }
+        );
+      },
+      1000
+    );
 
     return () =>
       window.clearInterval(interval);
@@ -362,7 +502,8 @@ export default function App() {
 
     if (
       rig.logical_cores > 0 &&
-      benchmarkThreads > rig.logical_cores
+      benchmarkThreads >
+        rig.logical_cores
     ) {
       setBenchmarkThreads(
         rig.logical_cores
@@ -377,9 +518,15 @@ export default function App() {
     benchmarkThreads,
   ]);
 
-  async function handleStart(id: string) {
+  async function handleStart(
+    id: string
+  ) {
     try {
-      await invoke("start_worker", { id });
+      await invoke(
+        "start_worker",
+        { id }
+      );
+
       await refresh();
     } catch (error) {
       console.error(
@@ -389,9 +536,15 @@ export default function App() {
     }
   }
 
-  async function handleStop(id: string) {
+  async function handleStop(
+    id: string
+  ) {
     try {
-      await invoke("stop_worker", { id });
+      await invoke(
+        "stop_worker",
+        { id }
+      );
+
       await refresh();
     } catch (error) {
       console.error(
@@ -421,7 +574,9 @@ export default function App() {
     }
   }
 
-  async function handleRemove(id: string) {
+  async function handleRemove(
+    id: string
+  ) {
     try {
       await invoke(
         "remove_worker",
@@ -537,7 +692,10 @@ export default function App() {
     value: string
   ) {
     const parsed =
-      Number.parseInt(value, 10);
+      Number.parseInt(
+        value,
+        10
+      );
 
     if (!Number.isFinite(parsed)) {
       return;
@@ -548,7 +706,10 @@ export default function App() {
 
     setBenchmarkThreads(
       Math.min(
-        Math.max(parsed, 1),
+        Math.max(
+          parsed,
+          1
+        ),
         maxThreads
       )
     );
@@ -570,7 +731,9 @@ export default function App() {
           : 0;
       }
 
-      if (benchmarkDuration <= 0) {
+      if (
+        benchmarkDuration <= 0
+      ) {
         return 0;
       }
 
@@ -661,11 +824,15 @@ export default function App() {
     if (
       benchmarkResult &&
       communityCpuOptions.includes(
-        benchmarkResult.benchmark.cpu
+        benchmarkResult
+          .benchmark
+          .cpu
       )
     ) {
       setSelectedCommunityCpu(
-        benchmarkResult.benchmark.cpu
+        benchmarkResult
+          .benchmark
+          .cpu
       );
       return;
     }
@@ -747,7 +914,9 @@ export default function App() {
         }
       }
 
-      return [...cpuResults].sort(
+      return [
+        ...cpuResults,
+      ].sort(
         (a, b) =>
           b.per_thread_hps -
           a.per_thread_hps
@@ -774,7 +943,8 @@ export default function App() {
       }
 
       const local =
-        benchmarkResult.benchmark
+        benchmarkResult
+          .benchmark
           .per_thread_hps;
 
       const community =
@@ -783,7 +953,9 @@ export default function App() {
 
       if (
         !Number.isFinite(local) ||
-        !Number.isFinite(community) ||
+        !Number.isFinite(
+          community
+        ) ||
         community <= 0
       ) {
         return null;
@@ -850,7 +1022,8 @@ export default function App() {
       <header className="app-header">
         <div>
           <h1>
-            {rig?.hostname ?? "this rig"}
+            {rig?.hostname ??
+              "this rig"}
           </h1>
 
           <span className="subtle">
@@ -1593,7 +1766,8 @@ export default function App() {
                       "space-between",
                     alignItems:
                       "center",
-                    gap: "12px",
+                    gap:
+                      "12px",
                     marginBottom:
                       "12px",
                   }}
@@ -1619,7 +1793,10 @@ export default function App() {
                     >
                       Compare your result against
                       community benchmark results
-                      for {benchmarkAlgorithm}.
+                      for{" "}
+                      {
+                        benchmarkAlgorithm
+                      }.
                     </div>
                   </div>
 
@@ -1705,7 +1882,8 @@ export default function App() {
                           "grid",
                         gridTemplateColumns:
                           "minmax(200px, 1fr) auto",
-                        gap: "10px",
+                        gap:
+                          "10px",
                         alignItems:
                           "end",
                         marginBottom:
@@ -1718,7 +1896,8 @@ export default function App() {
                             "flex",
                           flexDirection:
                             "column",
-                          gap: "5px",
+                          gap:
+                            "5px",
                           fontSize:
                             "12px",
                           color:
@@ -1758,10 +1937,16 @@ export default function App() {
                           {communityCpuOptions.map(
                             (cpu) => (
                               <option
-                                key={cpu}
-                                value={cpu}
+                                key={
+                                  cpu
+                                }
+                                value={
+                                  cpu
+                                }
                               >
-                                {cpu}
+                                {
+                                  cpu
+                                }
                               </option>
                             )
                           )}
@@ -1799,7 +1984,8 @@ export default function App() {
                               "grid",
                             gridTemplateColumns:
                               "repeat(auto-fit, minmax(150px, 1fr))",
-                            gap: "10px",
+                            gap:
+                              "10px",
                           }}
                         >
                           <div
@@ -1908,7 +2094,8 @@ export default function App() {
                               "grid",
                             gridTemplateColumns:
                               "repeat(auto-fit, minmax(180px, 1fr))",
-                            gap: "10px",
+                            gap:
+                              "10px",
                             marginTop:
                               "10px",
                           }}

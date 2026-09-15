@@ -30,13 +30,13 @@ struct DashboardConnection {
 }
 
 /// Result returned by the CPU benchmark.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct BenchmarkResult {
     schema_version: u32,
     benchmark: BenchmarkData,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct BenchmarkData {
     algorithm: String,
     cpu: String,
@@ -233,6 +233,51 @@ fn save_benchmark_result(
     })?;
 
     Ok(result_path)
+}
+
+/// Load the latest locally saved benchmark result.
+///
+/// Returns:
+///
+///     Some(result)
+///
+/// when benchmark-result.json exists and contains a valid benchmark result.
+///
+/// Returns:
+///
+///     None
+///
+/// when the user has not run a benchmark yet.
+#[tauri::command]
+async fn get_saved_benchmark_result(
+    app: tauri::AppHandle,
+) -> Result<Option<BenchmarkResult>, String> {
+    let result_path = benchmark_result_path(&app)?;
+
+    if !result_path.exists() {
+        return Ok(None);
+    }
+
+    let json = fs::read_to_string(&result_path)
+        .map_err(|e| {
+            format!(
+                "Failed to read local benchmark result '{}': {}",
+                result_path.display(),
+                e
+            )
+        })?;
+
+    let result: BenchmarkResult =
+        serde_json::from_str(&json)
+            .map_err(|e| {
+                format!(
+                    "Failed to parse local benchmark result '{}': {}",
+                    result_path.display(),
+                    e
+                )
+            })?;
+
+    Ok(Some(result))
 }
 
 /// Open the latest local benchmark-result.json using the operating
@@ -728,6 +773,7 @@ fn main() {
                 start_worker,
                 stop_worker,
                 run_benchmark,
+                get_saved_benchmark_result,
                 open_benchmark_result,
             ],
         )
