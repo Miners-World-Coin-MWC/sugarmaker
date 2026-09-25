@@ -9,6 +9,7 @@ on:
       - 'doc/**'
       - 'contrib/**'
       - '**/*.md'
+      - 'benchmarks/**'
   workflow_dispatch:
 
 env:
@@ -392,6 +393,16 @@ jobs:
       # ======================================================================
       # ANDROID / TERMUX DEPENDENCIES
       # ======================================================================
+
+      # setup-android@v3 uses a recent Android SDK command-line tool.
+      # The current GitHub runner may have Java 11 selected by default,
+      # but current command-line tools require Java 17+.
+      - name: Setup Java 17 for Android build
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Setup Android SDK
         if: matrix.platform == 'android'
