@@ -690,6 +690,251 @@ jobs:
 
           make ${MAKEJOBS}
 
+            # ======================================================================
+      # BUILD CPU BENCHMARK
+      #
+      # IMPORTANT:
+      # Only compile:
+      #   benchmark.c
+      #   yespower-opt.c
+      #   sha256.c
+      #
+      # yespower-opt.c already includes yespower-platform.c.
+      # Do NOT compile yespower-platform.c separately.
+      # Do NOT compile yespower-ref.c.
+      # ======================================================================
+
+      - name: Build Sugarmaker Benchmark - Linux x86_64
+        if: matrix.name == 'x86_64-linux'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - Linux i686
+        if: matrix.name == 'i686-linux'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -m32 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - Linux ARMv7
+        if: matrix.name == 'armv7l-linux'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          arm-linux-gnueabihf-gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -march=armv7-a \
+            -mfpu=vfpv3-d16 \
+            -mfloat-abi=hard \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - Linux ARM64
+        if: matrix.name == 'aarch64-linux'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          aarch64-linux-gnu-gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -march=armv8-a \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - Linux ARM64 Native
+        if: matrix.name == 'aarch64-linux-native'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -march=armv8-a \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - Linux RISC-V64
+        if: matrix.name == 'riscv64-linux'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          riscv64-linux-gnu-gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -march=rv64gc \
+            -mabi=lp64d \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - macOS Intel
+        if: matrix.name == 'x86_64-macos'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          clang \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -arch x86_64 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - macOS ARM64
+        if: matrix.name == 'arm64-macos'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          clang \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -arch arm64 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
+      - name: Build Sugarmaker Benchmark - Windows x64
+        if: matrix.name == 'x86_64-win'
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          gcc \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -static-libgcc \
+            -o build-benchmark/sugarmaker-benchmark.exe
+
+      - name: Build Sugarmaker Benchmark - Windows i686
+        if: matrix.name == 'i686-win'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          i686-w64-mingw32-gcc-posix \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -static \
+            -static-libgcc \
+            -o build-benchmark/sugarmaker-benchmark.exe
+
+      - name: Build Sugarmaker Benchmark - Windows ARM64
+        if: matrix.name == 'arm64-win'
+        shell: msys2 {0}
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          clang \
+            --target=aarch64-w64-windows-gnu \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -static-libgcc \
+            -o build-benchmark/sugarmaker-benchmark.exe
 
       # ======================================================================
       # NORMALIZE MINER BINARY
@@ -708,8 +953,13 @@ jobs:
             cp sugarmaker build-miner/sugarmaker
           fi
 
+          # Bundle the CPU benchmark alongside Sugarmaker.
+          if [ -d build-benchmark ]; then
+            cp -f build-benchmark/* build-miner/
+          fi
+
           echo "============================================================"
-          echo "Miner built successfully"
+          echo "Miner + benchmark built successfully"
           echo "============================================================"
 
           file build-miner/* || true

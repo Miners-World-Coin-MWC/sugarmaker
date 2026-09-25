@@ -1,4 +1,4 @@
-AC_INIT([sugarmaker], [2.5.1-sugar4])
+AC_INIT([sugarmaker], [2.5.2-sugar4])
 AC_PREREQ([2.59])
 
 # Allow legacy macro usage under modern autoconf
