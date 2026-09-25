@@ -77,7 +77,7 @@ const BENCHMARK_DURATIONS = [30, 60];
  * The Agent never writes to GitHub.
  */
 const COMMUNITY_BENCHMARK_URL =
-  "https://api.github.com/repos/Miners-World-Coin-MWC/sugarmaker/contents/benchmarks/benchmark.json?ref=Benchmark-system";
+  "https://api.github.com/repos/Miners-World-Coin-MWC/sugarmaker/contents/benchmarks/benchmark.json?ref=master";
 
 function decodeGitHubContent(content: string): string {
   const cleaned = content.replace(/\s/g, "");
