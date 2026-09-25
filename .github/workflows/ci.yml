@@ -87,6 +87,22 @@ jobs:
             gui: false
 
           # ==================================================================
+          # ANDROID / TERMUX
+          # ==================================================================
+
+          # Native ARM64 binary for Android / Termux.
+          # This is a standalone Termux-compatible executable, not an APK.
+          - name: android-arm64
+            os: ubuntu-22.04
+            platform: android
+            arch: arm64
+            native: false
+            cross_host: aarch64-linux-android
+            rust_target: aarch64-linux-android
+            android_api: 21
+            gui: false
+
+          # ==================================================================
           # MACOS
           # ==================================================================
 
@@ -371,6 +387,153 @@ jobs:
 
           test -f "${CURL_PREFIX}/lib/libcurl.a"
           test -f "${CURL_PREFIX}/include/curl/curl.h"
+
+
+      # ======================================================================
+      # ANDROID / TERMUX DEPENDENCIES
+      # ======================================================================
+
+      - name: Setup Android SDK
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          set -e
+
+          sdkmanager --install "ndk;29.0.14206865"
+
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+
+      # ======================================================================
+      # ANDROID / TERMUX CURL
+      # ======================================================================
+
+      # Sugarmaker only needs libcurl for RPC/Stratum networking.
+      # Build libcurl as a static library for Android and leave TLS disabled
+      # here because MWC mining uses stratum+tcp. Android system libraries
+      # remain dynamically linked as required by the Android runtime.
+      - name: Build static libcurl for Android ARM64
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          set -e
+
+          CURL_VERSION=8.22.0
+          CURL_PACKAGE="curl-${CURL_VERSION}"
+          CURL_PACKAGE_FILE="${CURL_PACKAGE}.tar.gz"
+          CURL_PREFIX="${PWD}/curl-android-arm64"
+          API="${{ matrix.android_api }}"
+
+          TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+
+          export CC="${TOOLCHAIN}/bin/aarch64-linux-android${API}-clang"
+          export CXX="${TOOLCHAIN}/bin/aarch64-linux-android${API}-clang++"
+          export AR="${TOOLCHAIN}/bin/llvm-ar"
+          export RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
+          export STRIP="${TOOLCHAIN}/bin/llvm-strip"
+          export CFLAGS="-O3 -fPIC -march=armv8-a"
+          export CXXFLAGS="${CFLAGS}"
+          export CPPFLAGS=""
+          export LDFLAGS=""
+          export LIBS="-llog -ldl -lm"
+
+          wget -q \
+            "https://curl.se/download/${CURL_PACKAGE_FILE}" \
+            -O "${CURL_PACKAGE_FILE}"
+
+          tar xzf "${CURL_PACKAGE_FILE}"
+          cd "${CURL_PACKAGE}"
+
+          ./configure \
+            --build=x86_64-pc-linux-gnu \
+            --host="aarch64-linux-android${API}" \
+            --prefix="${CURL_PREFIX}" \
+            --with-pic \
+            --disable-shared \
+            --enable-static \
+            --without-ssl \
+            --without-zlib \
+            --without-brotli \
+            --without-zstd \
+            --without-libidn2 \
+            --without-libpsl \
+            --without-nghttp2 \
+            --without-nghttp3 \
+            --without-ngtcp2 \
+            --without-quiche \
+            --without-libssh2 \
+            --without-librtmp \
+            --disable-ldap \
+            --disable-ldaps \
+            --disable-rtsp \
+            --disable-dict \
+            --disable-telnet \
+            --disable-tftp \
+            --disable-pop3 \
+            --disable-imap \
+            --disable-smtp \
+            --disable-gopher \
+            --disable-mqtt \
+            --disable-unix-sockets
+
+          make ${MAKEJOBS}
+          make install
+
+          cd ..
+
+          echo "CURL_PREFIX=${CURL_PREFIX}" >> "$GITHUB_ENV"
+
+          test -f "${CURL_PREFIX}/lib/libcurl.a"
+          test -f "${CURL_PREFIX}/include/curl/curl.h"
+
+
+      # ======================================================================
+      # BUILD MINER - ANDROID / TERMUX ARM64
+      # ======================================================================
+
+      - name: Build Sugarmaker - Android ARM64
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          set -e
+
+          ./autogen.sh || true
+
+          TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          API="${{ matrix.android_api }}"
+
+          export CC="${TOOLCHAIN}/bin/aarch64-linux-android${API}-clang"
+          export CXX="${TOOLCHAIN}/bin/aarch64-linux-android${API}-clang++"
+          export AR="${TOOLCHAIN}/bin/llvm-ar"
+          export RANLIB="${TOOLCHAIN}/bin/llvm-ranlib"
+          export STRIP="${TOOLCHAIN}/bin/llvm-strip"
+
+          export CFLAGS="-O3 -fomit-frame-pointer -march=armv8-a"
+          export CXXFLAGS="${CFLAGS}"
+          export CPPFLAGS="-I${CURL_PREFIX}/include"
+          export LDFLAGS="-L${CURL_PREFIX}/lib"
+          export LIBS="-llog -ldl -lm"
+
+          ./configure \
+            --build=x86_64-pc-linux-gnu \
+            --host="aarch64-linux-android${API}" \
+            --with-curl="${CURL_PREFIX}" \
+            CFLAGS="${CFLAGS}" \
+            CXXFLAGS="${CXXFLAGS}" \
+            CPPFLAGS="${CPPFLAGS}" \
+            LDFLAGS="${LDFLAGS}" \
+            LIBS="${LIBS}"
+
+          make ${MAKEJOBS}
+
+          "${STRIP}" \
+            --strip-debug \
+            --strip-unneeded \
+            sugarmaker
 
 
       # ======================================================================
@@ -832,6 +995,30 @@ jobs:
             -pthread \
             -o build-benchmark/sugarmaker-benchmark
 
+      - name: Build Sugarmaker Benchmark - Android ARM64
+        if: matrix.name == 'android-arm64'
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p build-benchmark
+
+          TOOLCHAIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          API="${{ matrix.android_api }}"
+
+          "${TOOLCHAIN}/bin/aarch64-linux-android${API}-clang" \
+            -O3 \
+            -DNDEBUG \
+            -std=c11 \
+            -march=armv8-a \
+            -I. \
+            -Iyespower-1.0.1 \
+            yespower-1.0.1/benchmark.c \
+            yespower-1.0.1/yespower-opt.c \
+            yespower-1.0.1/sha256.c \
+            -pthread \
+            -o build-benchmark/sugarmaker-benchmark
+
       - name: Build Sugarmaker Benchmark - macOS Intel
         if: matrix.name == 'x86_64-macos'
         shell: bash
@@ -1229,6 +1416,7 @@ jobs:
 
           Components:
             - Sugarmaker CPU Miner
+            - Sugarmaker CPU Benchmark
           EOF
 
           if [ "${{ matrix.gui }}" = "true" ]; then
